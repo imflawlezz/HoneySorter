@@ -82,6 +82,10 @@ After a batch run, a `honey_sorter_undo.json` file lands in the source folder. *
 ![Source folder with undo JSON](Demo/08_json.gif)
 ![Revert / undo process](Demo/09_undo.gif)
 
+## Credits
+
+Screenshots and recordings in **Demo** feature artwork by **anon** — [pixiv](https://www.pixiv.net/en/users/35692440/artworks).
+
 ## Requirements
 
 - macOS 14+, tested on macOS 26
