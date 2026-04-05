@@ -5,7 +5,7 @@ final class DirectoryMonitor {
     private var monitorSource: DispatchSourceFileSystemObject?
     private var fileDescriptor: Int32 = -1
 
-    func start(url: URL, onEvent: @escaping @Sendable () -> Void) {
+    func start(url: URL, onEvent: @escaping () -> Void) {
         stop()
         let fd = open(url.path(percentEncoded: false), O_EVTONLY)
         guard fd >= 0 else { return }

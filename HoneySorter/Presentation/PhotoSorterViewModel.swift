@@ -220,7 +220,7 @@ class PhotoSorterViewModel {
     private func startDirectoryMonitoring() {
         guard let url = directoryURL else { return }
         directoryMonitor.start(url: url) { [weak self] in
-            Task { @MainActor in self?.debouncedReload() }
+            self?.debouncedReload()
         }
     }
 
