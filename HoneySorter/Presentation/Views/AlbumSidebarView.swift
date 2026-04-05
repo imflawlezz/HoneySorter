@@ -30,9 +30,18 @@ struct AlbumSidebarView: View {
                     }
                 }
                 Section {
-                    Button(role: .destructive) { viewModel.removeAllAlbums() } label: {
-                        Label("Clear All Albums", systemImage: "trash")
+                    Button(role: .destructive) {
+                        viewModel.removeAllAlbums()
+                    } label: {
+                        Label("Clear All Albums", systemImage: "trash.fill")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 4)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 14, trailing: 12))
+                    .listRowBackground(Color.clear)
                     .help("Remove all album assignments and start over.")
                 }
             }
