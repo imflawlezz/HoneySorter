@@ -13,5 +13,6 @@ struct HoneySorterApp: App {
         WindowGroup {
             ContentView()
         }
+        .defaultSize(width: 1100, height: 750)
     }
 }
