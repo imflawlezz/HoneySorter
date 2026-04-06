@@ -2,43 +2,51 @@ import Foundation
 
 enum AlbumSortingService {
 
-    static func photosInAlbum(_ photos: [PhotoFile], album: Album) -> [PhotoFile] {
-        photos.filter { album.contains($0) }.sorted { $0.sortIndex < $1.sortIndex }
+    nonisolated static func photosInAlbum(_ photos: [PhotoFile], album: Album) -> [PhotoFile] {
+        let lo = album.startSortIndex
+        let hi = album.endSortIndex
+        guard lo >= 0, hi < photos.count, lo <= hi else { return [] }
+        if album.isReversed {
+            return Array(photos[lo...hi].reversed())
+        }
+        return Array(photos[lo...hi])
     }
 
-    static func maxAlbumDigits(startingAlbumNumber: Int, albumCount: Int) -> Int {
+    nonisolated static func maxAlbumDigits(startingAlbumNumber: Int, albumCount: Int) -> Int {
         let last = startingAlbumNumber + max(albumCount, 1) - 1
         return String(last).count
     }
 
-    static func maxIndexDigits(photos: [PhotoFile], albums: [Album]) -> Int {
-        let maxCount = albums.map { photosInAlbum(photos, album: $0).count }.max() ?? 1
-        return String(maxCount).count
+    nonisolated static func maxIndexDigitsFromAlbums(_ albums: [Album]) -> Int {
+        let maxPhotos = albums.map(\.estimatedCount).max() ?? 1
+        return String(maxPhotos).count
     }
 
-    static func formattedName(
+    nonisolated static func padWidths(config: AlbumNamingConfiguration, albumCount: Int, albums: [Album]) -> (maxA: Int, maxI: Int) {
+        let maxA = max(maxAlbumDigits(startingAlbumNumber: config.startingAlbumNumber, albumCount: albumCount), 2)
+        let maxI = max(maxIndexDigitsFromAlbums(albums), 2)
+        return (maxA, maxI)
+    }
+
+    nonisolated static func formatFilename(
         albumNumber: Int,
         index: Int,
         ext: String,
         config: AlbumNamingConfiguration,
-        albumCount: Int,
-        photos: [PhotoFile],
-        albums: [Album]
+        maxAlbumPadWidth: Int,
+        maxIndexPadWidth: Int
     ) -> String {
         let sep = config.separator.rawValue
-        let maxA = max(maxAlbumDigits(startingAlbumNumber: config.startingAlbumNumber, albumCount: albumCount), 2)
-        let maxI = max(maxIndexDigits(photos: photos, albums: albums), 2)
-        let a = config.zeroPadding ? String(format: "%0\(maxA)d", albumNumber) : "\(albumNumber)"
-        let i = config.zeroPadding ? String(format: "%0\(maxI)d", index) : "\(index)"
-        return "\(a)\(sep)\(i).\(ext)"
+        let a = config.zeroPadding ? String(format: "%0\(maxAlbumPadWidth)d", albumNumber) : "\(albumNumber)"
+        let i = config.zeroPadding ? String(format: "%0\(maxIndexPadWidth)d", index) : "\(index)"
+        let trimmedPrefix = config.photoIndexPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(a)\(sep)\(trimmedPrefix)\(i).\(ext)"
     }
 
-    static func albumSubfolderName(
+    nonisolated static func albumSubfolderName(
         forAlbumNumber albumNumber: Int,
         config: AlbumNamingConfiguration,
-        albumCount: Int,
-        photos: [PhotoFile],
-        albums: [Album]
+        albumCount: Int
     ) -> String {
         let maxA = max(maxAlbumDigits(startingAlbumNumber: config.startingAlbumNumber, albumCount: albumCount), 2)
         let a = config.zeroPadding ? String(format: "%0\(maxA)d", albumNumber) : "\(albumNumber)"
@@ -47,27 +55,25 @@ enum AlbumSortingService {
         return "\(trimmed)\(a)"
     }
 
-    static func filenamePreview(config: AlbumNamingConfiguration, albumCount: Int, photos: [PhotoFile], albums: [Album]) -> String {
+    nonisolated static func filenamePreview(config: AlbumNamingConfiguration, albumCount: Int, albums: [Album]) -> String {
+        let (maxA, maxI) = padWidths(config: config, albumCount: albumCount, albums: albums)
         let sep = config.separator.rawValue
-        let maxA = max(maxAlbumDigits(startingAlbumNumber: config.startingAlbumNumber, albumCount: albumCount), 2)
-        let maxI = max(maxIndexDigits(photos: photos, albums: albums), 2)
         let a = config.zeroPadding ? String(format: "%0\(maxA)d", config.startingAlbumNumber) : "\(config.startingAlbumNumber)"
         let i = config.zeroPadding ? String(format: "%0\(maxI)d", 1) : "1"
-        var name = "\(a)\(sep)\(i).jpg"
+        let trimmedPrefix = config.photoIndexPrefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        var name = "\(a)\(sep)\(trimmedPrefix)\(i).jpg"
         if config.createAlbumFolders {
             let folder = albumSubfolderName(
                 forAlbumNumber: config.startingAlbumNumber,
                 config: config,
-                albumCount: albumCount,
-                photos: photos,
-                albums: albums
+                albumCount: albumCount
             )
             name = "\(folder)/\(name)"
         }
         return name
     }
 
-    static func assignmentCaches(
+    nonisolated static func assignmentCaches(
         photos: [PhotoFile],
         albums: [Album],
         config: AlbumNamingConfiguration
@@ -75,32 +81,38 @@ enum AlbumSortingService {
         var albumMap: [UUID: Album] = [:]
         var nameMap: [UUID: String] = [:]
         let count = albums.count
+        let (maxA, maxI) = padWidths(config: config, albumCount: count, albums: albums)
+
         for album in albums {
             let inAlbum = photosInAlbum(photos, album: album)
             for (idx, p) in inAlbum.enumerated() {
                 albumMap[p.id] = album
-                nameMap[p.id] = formattedName(
+                nameMap[p.id] = formatFilename(
                     albumNumber: album.number,
                     index: idx + 1,
                     ext: p.fileExtension,
                     config: config,
-                    albumCount: count,
-                    photos: photos,
-                    albums: albums
+                    maxAlbumPadWidth: maxA,
+                    maxIndexPadWidth: maxI
                 )
             }
         }
         return (albumMap, nameMap)
     }
 
-    static func renumberedAlbums(_ albums: [Album], startingAlbumNumber: Int) -> [Album] {
+    nonisolated static func renumberedAlbums(_ albums: [Album], startingAlbumNumber: Int) -> [Album] {
         let sorted = albums.sorted { $0.startSortIndex < $1.startSortIndex }
         return sorted.enumerated().map {
-            Album(number: startingAlbumNumber + $0.offset, startSortIndex: $0.element.startSortIndex, endSortIndex: $0.element.endSortIndex)
+            Album(
+                number: startingAlbumNumber + $0.offset,
+                startSortIndex: $0.element.startSortIndex,
+                endSortIndex: $0.element.endSortIndex,
+                isReversed: $0.element.isReversed
+            )
         }
     }
 
-    static func nextAlbumNumber(startingAlbumNumber: Int, albumCount: Int) -> Int {
+    nonisolated static func nextAlbumNumber(startingAlbumNumber: Int, albumCount: Int) -> Int {
         startingAlbumNumber + albumCount
     }
 
@@ -109,7 +121,7 @@ enum AlbumSortingService {
         case rangeHasAssignedPhotos = "Some photos in this range are already assigned to another album."
     }
 
-    static func tryAppendAlbumFromRange(
+    nonisolated static func tryAppendAlbumFromRange(
         startPhoto: PhotoFile,
         endPhoto: PhotoFile,
         photos: [PhotoFile],
@@ -118,16 +130,15 @@ enum AlbumSortingService {
     ) -> Result<Album, RangeSelectionError> {
         let lo = min(startPhoto.sortIndex, endPhoto.sortIndex)
         let hi = max(startPhoto.sortIndex, endPhoto.sortIndex)
-        let conflicts = photos
-            .filter { $0.sortIndex >= lo && $0.sortIndex <= hi }
-            .filter { albumByPhotoId[$0.id] != nil }
-        if !conflicts.isEmpty {
+        let isReversed = startPhoto.sortIndex > endPhoto.sortIndex
+        let conflicts = photos[lo...hi].contains { albumByPhotoId[$0.id] != nil }
+        if conflicts {
             return .failure(.rangeHasAssignedPhotos)
         }
-        return .success(Album(number: nextAlbumNumber, startSortIndex: lo, endSortIndex: hi))
+        return .success(Album(number: nextAlbumNumber, startSortIndex: lo, endSortIndex: hi, isReversed: isReversed))
     }
 
-    static func buildRenameOperations(
+    nonisolated static func buildRenameOperations(
         photos: [PhotoFile],
         albums: [Album],
         config: AlbumNamingConfiguration,
@@ -143,27 +154,25 @@ enum AlbumSortingService {
         }
 
         let count = albums.count
+        let (maxA, maxI) = padWidths(config: config, albumCount: count, albums: albums)
         var ops: [FileOperation] = []
         for album in albums.sorted(by: { $0.number < $1.number }) {
             let albumPhotos = photosInAlbum(photos, album: album)
             for (order, photo) in albumPhotos.enumerated() {
-                let name = formattedName(
+                let name = formatFilename(
                     albumNumber: album.number,
                     index: order + 1,
                     ext: photo.fileExtension,
                     config: config,
-                    albumCount: count,
-                    photos: photos,
-                    albums: albums
+                    maxAlbumPadWidth: maxA,
+                    maxIndexPadWidth: maxI
                 )
                 var destDir = baseDir
                 if config.createAlbumFolders {
                     let folder = albumSubfolderName(
                         forAlbumNumber: album.number,
                         config: config,
-                        albumCount: count,
-                        photos: photos,
-                        albums: albums
+                        albumCount: count
                     )
                     destDir = baseDir.appendingPathComponent(folder)
                 }
@@ -173,21 +182,22 @@ enum AlbumSortingService {
         return ops
     }
 
-    static func displayRange(for album: Album, photos: [PhotoFile]) -> String {
-        let ap = photosInAlbum(photos, album: album)
-        guard let first = ap.first, let last = ap.last else { return "—" }
+    nonisolated static func displayRange(for album: Album, photos: [PhotoFile]) -> String {
+        let lo = album.startSortIndex
+        let hi = album.endSortIndex
+        guard lo >= 0, hi < photos.count, lo <= hi else { return "—" }
+        let first = album.isReversed ? photos[hi] : photos[lo]
+        let last = album.isReversed ? photos[lo] : photos[hi]
         if first.id == last.id { return first.originalFilename }
         return "\(first.originalFilename) — \(last.originalFilename)"
     }
 
-    static func albumListTitle(for album: Album, config: AlbumNamingConfiguration, albumCount: Int, photos: [PhotoFile], albums: [Album]) -> String {
+    nonisolated static func albumListTitle(for album: Album, config: AlbumNamingConfiguration, albumCount: Int) -> String {
         if config.createAlbumFolders {
             return albumSubfolderName(
                 forAlbumNumber: album.number,
                 config: config,
-                albumCount: albumCount,
-                photos: photos,
-                albums: albums
+                albumCount: albumCount
             )
         }
         return "\(album.number)"
