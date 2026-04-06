@@ -19,5 +19,9 @@ enum GridThumbnailSize: String, CaseIterable, Identifiable {
         case .extraLarge: return 200
         }
     }
-    var thumbnailPixelSize: CGFloat { cellSide * 2 }
+
+    var thumbnailDecodeMaxPixelSize: CGFloat {
+        let raw = cellSide * 1.25
+        return min(384, max(72, ceil(raw)))
+    }
 }

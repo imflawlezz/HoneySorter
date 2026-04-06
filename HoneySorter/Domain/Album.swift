@@ -5,6 +5,7 @@ struct Album: Identifiable, Sendable {
     nonisolated let number: Int
     nonisolated let startSortIndex: Int
     nonisolated let endSortIndex: Int
+    nonisolated let isReversed: Bool
 
     nonisolated func contains(_ photo: PhotoFile) -> Bool {
         photo.sortIndex >= startSortIndex && photo.sortIndex <= endSortIndex
