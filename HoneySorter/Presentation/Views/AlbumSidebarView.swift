@@ -4,49 +4,82 @@ struct AlbumSidebarView: View {
     @Bindable var viewModel: PhotoSorterViewModel
 
     var body: some View {
-        List {
-            namingSection
-            outputSection
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    namingSection
+                    outputSection
 
-            if viewModel.albums.isEmpty {
-                Section {
-                    ContentUnavailableView {
-                        Label("No Albums Yet", systemImage: "rectangle.stack")
-                    } description: {
-                        VStack(alignment: .center, spacing: 10) {
-                            Text("Click two photos to set an album range.")
-                            Text("Right‑click a thumbnail, then choose Rename.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.center)
-                                .fixedSize(horizontal: false, vertical: true)
+                    if viewModel.albums.isEmpty {
+                        ContentUnavailableView {
+                            Label("No Albums Yet", systemImage: "rectangle.stack")
+                        } description: {
+                            VStack(alignment: .center, spacing: 10) {
+                                Text("Click two photos to set an album range.")
+                                Text("Right‑click a thumbnail, then choose Rename.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                    } else {
+                        albumListSection
                     }
+
+                    Color.clear
+                        .frame(height: 1)
+                        .id("albumSidebarScrollBottom")
                 }
-            } else {
-                Section("Albums (\(viewModel.albums.count))") {
-                    ForEach(viewModel.albums) { album in
-                        albumRow(album)
-                    }
-                }
-                Section {
-                    Button(role: .destructive) {
-                        viewModel.removeAllAlbums()
-                    } label: {
-                        Label("Clear All Albums", systemImage: "trash.fill")
-                            .font(.body.weight(.semibold))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .listRowInsets(EdgeInsets(top: 10, leading: 12, bottom: 14, trailing: 12))
-                    .listRowBackground(Color.clear)
-                    .help("Remove all album assignments and start over.")
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .onChange(of: viewModel.albums.last?.id) { _, newId in
+                guard newId != nil else { return }
+                scrollToNewAlbum(proxy: proxy)
             }
         }
-        .listStyle(.sidebar)
+    }
+
+    private func scrollToNewAlbum(proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(48))
+            withAnimation(.easeOut(duration: 0.22)) {
+                proxy.scrollTo("albumSidebarScrollBottom", anchor: .bottom)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var albumListSection: some View {
+        Section {
+            ForEach(viewModel.albums) { album in
+                albumRow(album)
+            }
+        } header: {
+            Text("Albums (\(viewModel.albums.count))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        Section {
+            Button(role: .destructive) {
+                viewModel.removeAllAlbums()
+            } label: {
+                Label("Clear All Albums", systemImage: "trash.fill")
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .help("Remove all album assignments and start over.")
+        }
     }
 
     @ViewBuilder
@@ -70,6 +103,16 @@ struct AlbumSidebarView: View {
             }
             .help("Character placed between the album number and photo index in the filename.")
 
+            HStack {
+                Text("Photo prefix")
+                Spacer()
+                TextField("Optional (e.g. p_)", text: $viewModel.photoIndexPrefix)
+                    .frame(minWidth: 120)
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+            }
+            .help("Optional text inserted right before the photo index. Empty uses only the number. No extra character is inserted for you.")
+
             Toggle("Zero Padding", isOn: $viewModel.zeroPadding)
                 .help("Pad numbers with leading zeros for consistent sorting (e.g. 01_01 instead of 1_1).")
 
@@ -83,6 +126,10 @@ struct AlbumSidebarView: View {
             }
         } header: {
             Text("Naming")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -127,13 +174,17 @@ struct AlbumSidebarView: View {
             }
         } header: {
             Text("Output")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textCase(nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     @ViewBuilder
     private func albumRow(_ album: Album) -> some View {
         let color = viewModel.colorForAlbum(album)
-        let count = viewModel.photosInAlbum(album).count
+        let count = album.estimatedCount
 
         HStack(spacing: 8) {
             Circle().fill(color).frame(width: 10, height: 10)

@@ -8,7 +8,7 @@ struct PhotoThumbnailView: View {
     let isStartSelected: Bool
     let newName: String?
     let cellSide: CGFloat
-    let thumbnailPixelSize: CGFloat
+    let decodeMaxPixelSize: CGFloat
 
     @State private var loadedImage: NSImage?
     @State private var loadTask: Task<Void, Never>?
@@ -31,7 +31,7 @@ struct PhotoThumbnailView: View {
                 if let loadedImage {
                     Image(nsImage: loadedImage)
                         .resizable()
-                        .interpolation(.medium)
+                        .interpolation(.low)
                         .aspectRatio(contentMode: .fit)
                         .frame(maxWidth: cellSide, maxHeight: cellSide)
                 } else {
@@ -78,6 +78,7 @@ struct PhotoThumbnailView: View {
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .allowsTightening(true)
 
                 if let newName {
                     Text("→ \(newName)")
@@ -85,17 +86,19 @@ struct PhotoThumbnailView: View {
                         .foregroundStyle(albumColor ?? .secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .allowsTightening(true)
                 }
             }
         }
         .frame(width: cellSide + 8)
+        .compositingGroup()
         .contentShape(Rectangle())
         .onAppear { startLoad() }
         .onDisappear {
             loadTask?.cancel()
             loadTask = nil
         }
-        .onChange(of: thumbnailPixelSize) { _, _ in
+        .onChange(of: decodeMaxPixelSize) { _, _ in
             loadedImage = nil
             startLoad()
         }
@@ -105,7 +108,7 @@ struct PhotoThumbnailView: View {
         guard loadedImage == nil else { return }
         loadTask?.cancel()
         loadTask = Task {
-            let image = await ThumbnailCache.image(for: photo.url, maxPixelSize: thumbnailPixelSize)
+            let image = await ThumbnailCache.image(for: photo.url, maxPixelSize: decodeMaxPixelSize)
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 loadedImage = image

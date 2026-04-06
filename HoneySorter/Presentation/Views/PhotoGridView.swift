@@ -4,12 +4,15 @@ struct PhotoGridView: View {
     @Bindable var viewModel: PhotoSorterViewModel
 
     private var cell: CGFloat { viewModel.gridThumbnailSize.cellSide }
-    private var pixel: CGFloat { viewModel.gridThumbnailSize.thumbnailPixelSize }
+    private var decodePixels: CGFloat { viewModel.gridThumbnailSize.thumbnailDecodeMaxPixelSize }
 
     var body: some View {
         ScrollView {
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: cell + 8, maximum: cell + 16), spacing: 8)],
+                columns: [
+                    GridItem(.adaptive(minimum: cell + 8), spacing: 8, alignment: .top),
+                ],
+                alignment: .center,
                 spacing: 12
             ) {
                 ForEach(viewModel.photosForGrid) { photo in
@@ -29,7 +32,7 @@ struct PhotoGridView: View {
                             isStartSelected: isStart,
                             newName: viewModel.newFilename(for: photo),
                             cellSide: cell,
-                            thumbnailPixelSize: pixel
+                            decodeMaxPixelSize: decodePixels
                         )
                     }
                     .buttonStyle(.plain)
@@ -43,5 +46,9 @@ struct PhotoGridView: View {
             }
             .padding()
         }
+        .transaction { txn in
+            txn.animation = nil
+        }
+        .scrollClipDisabled(false)
     }
 }
