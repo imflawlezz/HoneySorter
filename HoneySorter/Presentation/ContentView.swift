@@ -20,6 +20,14 @@ struct ContentView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                if case .startSelected = viewModel.selectionState {
+                    Button("Cancel") { viewModel.cancelSelection() }
+                        .keyboardShortcut(.escape, modifiers: [])
+                        .help("Cancel the current album selection")
+                }
+            }
+
             ToolbarItem(placement: .principal) {
                 FolderPathToolbarBubble(
                     pathDisplay: directoryPathToolbarLabel,
@@ -28,25 +36,30 @@ struct ContentView: View {
                 )
             }
 
-            ToolbarItemGroup(placement: .primaryAction) {
-                if viewModel.hasUndoManifest && !viewModel.duplicateMode {
-                    Button { viewModel.showUndoConfirmation = true } label: {
-                        Label("Revert", systemImage: "arrow.uturn.backward")
-                    }
-                    .help("Undo the most recent rename and restore original filenames")
-                }
-
-                Button { viewModel.showConfirmation = true } label: {
-                    Label(viewModel.duplicateMode ? "Copy All" : "Rename All", systemImage: "checkmark.circle")
-                }
-                .disabled(!viewModel.canRename)
-                .help(viewModel.duplicateMode
-                    ? "Copy and rename all assigned photos to the output location"
-                    : "Rename all assigned photos in place"
-                )
-            }
-
             ToolbarItemGroup(placement: .automatic) {
+                Menu {
+                    ForEach(PhotoOrdering.allCases) { ordering in
+                        Button {
+                            viewModel.photoOrdering = ordering
+                        } label: {
+                            HStack {
+                                Text(ordering.label)
+                                Spacer(minLength: 12)
+                                if viewModel.photoOrdering == ordering {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.arrow.down")
+                        Text(viewModel.photoOrdering.label)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .help("How photos are ordered in the grid (changing this resets album selections).")
+
                 Picker(selection: $viewModel.gridThumbnailSize) {
                     ForEach(GridThumbnailSize.allCases) { size in
                         Text(size.label).tag(size)
@@ -64,12 +77,29 @@ struct ContentView: View {
                 .help("Show only photos not in an album")
             }
 
-            ToolbarItem(placement: .cancellationAction) {
-                if case .startSelected = viewModel.selectionState {
-                    Button("Cancel") { viewModel.cancelSelection() }
-                        .keyboardShortcut(.escape, modifiers: [])
-                        .help("Cancel the current album selection")
+            ToolbarItem(placement: .primaryAction) {
+                if viewModel.hasUndoManifest && !viewModel.duplicateMode {
+                    Button { viewModel.showUndoConfirmation = true } label: {
+                        Label("Revert", systemImage: "arrow.uturn.backward")
+                    }
+                    .help("Undo the most recent rename and restore original filenames")
                 }
+            }
+
+            ToolbarItem(placement: .confirmationAction) {
+                Button { viewModel.showConfirmation = true } label: {
+                    Image(systemName: viewModel.duplicateMode ? "doc.on.doc.fill" : "checkmark.circle.fill")
+                        .font(.body.weight(.semibold))
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .disabled(!viewModel.canRename)
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .help(viewModel.duplicateMode
+                    ? "Copy and rename all assigned photos to the output location"
+                    : "Rename all assigned photos in place"
+                )
+                .accessibilityLabel(viewModel.duplicateMode ? "Copy All" : "Rename All")
             }
         }
         .overlay(alignment: .bottom) { statusBar }

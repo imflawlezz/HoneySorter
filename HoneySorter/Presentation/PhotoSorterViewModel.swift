@@ -14,6 +14,7 @@ class PhotoSorterViewModel {
     private(set) var newFilenameByPhotoId: [UUID: String] = [:]
 
     var albums: [Album] = []
+    private var assignmentRebuildGeneration: UInt64 = 0
     var startingAlbumNumber: Int = 1 {
         didSet {
             let clamped = max(1, min(9999, startingAlbumNumber))
@@ -29,6 +30,7 @@ class PhotoSorterViewModel {
 
     var separator: Separator = .underscore { didSet { rebuildAssignmentCaches() } }
     var zeroPadding: Bool = false { didSet { rebuildAssignmentCaches() } }
+    var photoIndexPrefix: String = "" { didSet { rebuildAssignmentCaches() } }
 
     var createAlbumFolders: Bool = false { didSet { rebuildAssignmentCaches() } }
     var albumFolderPrefix: String = "" { didSet { rebuildAssignmentCaches() } }
@@ -51,12 +53,19 @@ class PhotoSorterViewModel {
     var showUnassignedOnly: Bool = false
 
     var gridThumbnailSize: GridThumbnailSize = .medium
+    var photoOrdering: PhotoOrdering = .filename {
+        didSet {
+            guard photoOrdering != oldValue else { return }
+            reloadWithCurrentOrdering()
+        }
+    }
 
     private var namingConfiguration: AlbumNamingConfiguration {
         AlbumNamingConfiguration(
             separator: separator,
             zeroPadding: zeroPadding,
             startingAlbumNumber: startingAlbumNumber,
+            photoIndexPrefix: photoIndexPrefix,
             albumFolderPrefix: albumFolderPrefix,
             createAlbumFolders: createAlbumFolders
         )
@@ -70,7 +79,6 @@ class PhotoSorterViewModel {
         AlbumSortingService.filenamePreview(
             config: namingConfiguration,
             albumCount: albums.count,
-            photos: photos,
             albums: albums
         )
     }
@@ -102,7 +110,7 @@ class PhotoSorterViewModel {
     }
 
     var canRename: Bool { !albums.isEmpty && !isRenaming && !photos.isEmpty }
-    var unassignedCount: Int { photos.filter { albumForPhoto($0) == nil }.count }
+    var unassignedCount: Int { max(0, photos.count - albumByPhotoId.count) }
 
     var effectiveOutputDirectory: URL? {
         if duplicateMode {
@@ -125,14 +133,18 @@ class PhotoSorterViewModel {
     }
 
     func formattedName(albumNumber: Int, index: Int, ext: String) -> String {
-        AlbumSortingService.formattedName(
+        let (maxA, maxI) = AlbumSortingService.padWidths(
+            config: namingConfiguration,
+            albumCount: albums.count,
+            albums: albums
+        )
+        return AlbumSortingService.formatFilename(
             albumNumber: albumNumber,
             index: index,
             ext: ext,
             config: namingConfiguration,
-            albumCount: albums.count,
-            photos: photos,
-            albums: albums
+            maxAlbumPadWidth: maxA,
+            maxIndexPadWidth: maxI
         )
     }
 
@@ -140,9 +152,7 @@ class PhotoSorterViewModel {
         AlbumSortingService.albumSubfolderName(
             forAlbumNumber: albumNumber,
             config: namingConfiguration,
-            albumCount: albums.count,
-            photos: photos,
-            albums: albums
+            albumCount: albums.count
         )
     }
 
@@ -162,9 +172,7 @@ class PhotoSorterViewModel {
         AlbumSortingService.albumListTitle(
             for: album,
             config: namingConfiguration,
-            albumCount: albums.count,
-            photos: photos,
-            albums: albums
+            albumCount: albums.count
         )
     }
 
@@ -208,12 +216,29 @@ class PhotoSorterViewModel {
         isLoading = true
 
         Task {
-            let result = await PhotoDirectoryScanner.loadImages(from: url)
+            let result = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
+            await MainActor.run {
+                photos = result
+                rebuildAssignmentCaches()
+                hasUndoManifest = FileRenamer.hasManifest(in: url)
+                isLoading = false
+                startDirectoryMonitoring()
+            }
+        }
+    }
+
+    func rescanCurrentDirectory() async {
+        guard let url = directoryURL else { return }
+        await MainActor.run { isLoading = true }
+        let result = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
+        await MainActor.run {
             photos = result
+            albums = []
+            selectionState = .idle
+            photoPendingRename = nil
             rebuildAssignmentCaches()
             hasUndoManifest = FileRenamer.hasManifest(in: url)
             isLoading = false
-            startDirectoryMonitoring()
         }
     }
 
@@ -238,14 +263,31 @@ class PhotoSorterViewModel {
         let previousCount = photos.count
 
         Task {
-            let newPhotos = await PhotoDirectoryScanner.loadImages(from: url)
-            if newPhotos.count != previousCount {
+            let newPhotos = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
+            await MainActor.run {
+                if newPhotos.count != previousCount {
+                    albums = []
+                    selectionState = .idle
+                }
+                photos = newPhotos
+                rebuildAssignmentCaches()
+                hasUndoManifest = FileRenamer.hasManifest(in: url)
+            }
+        }
+    }
+
+    private func reloadWithCurrentOrdering() {
+        guard let url = directoryURL else { return }
+        Task {
+            await MainActor.run { isLoading = true }
+            let newPhotos = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
+            await MainActor.run {
                 albums = []
                 selectionState = .idle
+                photos = newPhotos
+                rebuildAssignmentCaches()
+                isLoading = false
             }
-            photos = newPhotos
-            rebuildAssignmentCaches()
-            hasUndoManifest = FileRenamer.hasManifest(in: url)
         }
     }
 
@@ -301,13 +343,26 @@ class PhotoSorterViewModel {
     }
 
     private func rebuildAssignmentCaches() {
-        let caches = AlbumSortingService.assignmentCaches(
-            photos: photos,
-            albums: albums,
-            config: namingConfiguration
-        )
-        albumByPhotoId = caches.albumByPhotoId
-        newFilenameByPhotoId = caches.newFilenameByPhotoId
+        assignmentRebuildGeneration += 1
+        let gen = assignmentRebuildGeneration
+        let snapshotPhotos = photos
+        let snapshotAlbums = albums
+        let config = namingConfiguration
+
+        Task {
+            let caches = await Task.detached(priority: .userInitiated) {
+                AlbumSortingService.assignmentCaches(
+                    photos: snapshotPhotos,
+                    albums: snapshotAlbums,
+                    config: config
+                )
+            }.value
+            await MainActor.run {
+                guard gen == assignmentRebuildGeneration else { return }
+                albumByPhotoId = caches.albumByPhotoId
+                newFilenameByPhotoId = caches.newFilenameByPhotoId
+            }
+        }
     }
 
     func buildOperations() -> [FileOperation] {
@@ -336,11 +391,11 @@ class PhotoSorterViewModel {
                     try FileRenamer.executeRename(in: srcDir, operations: ops)
                 }
             }.value
+            await rescanCurrentDirectory()
             resultMessage = isCopy
                 ? "Copied \(ops.count) file(s) successfully."
                 : "Renamed \(ops.count) file(s) successfully."
             showComplete = true
-            loadDirectory(srcDir)
         } catch {
             errorMessage = error.localizedDescription
             showError = true
@@ -353,9 +408,9 @@ class PhotoSorterViewModel {
         isRenaming = true
         do {
             try await Task.detached { try FileRenamer.undoRename(in: dir) }.value
+            await rescanCurrentDirectory()
             resultMessage = "All files restored to their original names."
             showComplete = true
-            loadDirectory(dir)
         } catch {
             errorMessage = error.localizedDescription
             showError = true
@@ -383,10 +438,10 @@ class PhotoSorterViewModel {
             try await Task.detached {
                 try FileRenamer.executeRename(in: dir, operations: ops)
             }.value
+            await rescanCurrentDirectory()
             resultMessage = "Renamed to “\(ops[0].destinationURL.lastPathComponent)”."
             showComplete = true
             photoPendingRename = nil
-            loadDirectory(dir)
         } catch {
             errorMessage = error.localizedDescription
             showError = true
