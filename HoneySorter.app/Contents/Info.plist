@@ -6,6 +6,8 @@
 	<string>25E246</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>HoneySorter</string>
 	<key>CFBundleExecutable</key>
 	<string>HoneySorter</string>
 	<key>CFBundleIconFile</key>
@@ -44,6 +46,8 @@
 	<string>2630</string>
 	<key>DTXcodeBuild</key>
 	<string>17C529</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.0</string>
 </dict>
