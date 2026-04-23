@@ -5,41 +5,59 @@ struct AlbumSidebarView: View {
 
     var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    namingSection
-                    outputSection
+            VStack(spacing: 0) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
+                        namingSection
+                        outputSection
 
-                    if viewModel.albums.isEmpty {
-                        ContentUnavailableView {
-                            Label("No Albums Yet", systemImage: "rectangle.stack")
-                        } description: {
-                            VStack(alignment: .center, spacing: 10) {
-                                Text("Click two photos to set an album range.")
-                                Text("Right‑click a thumbnail, then choose Rename.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .multilineTextAlignment(.center)
-                                    .fixedSize(horizontal: false, vertical: true)
+                        if viewModel.albums.isEmpty {
+                            ContentUnavailableView {
+                                Label("No Albums Yet", systemImage: "rectangle.stack")
+                            } description: {
+                                VStack(alignment: .center, spacing: 10) {
+                                    Text("Click two photos to set an album range.")
+                                    Text("Right‑click a thumbnail, then choose Rename.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .multilineTextAlignment(.center)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                        } else {
+                            albumListSection
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                    } else {
-                        albumListSection
-                    }
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id("albumSidebarScrollBottom")
+                        Color.clear
+                            .frame(height: 1)
+                            .id("albumSidebarScrollBottom")
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-            }
-            .onChange(of: viewModel.albums.last?.id) { _, newId in
-                guard newId != nil else { return }
-                scrollToNewAlbum(proxy: proxy)
+                .onChange(of: viewModel.albums.last?.id) { _, newId in
+                    guard newId != nil else { return }
+                    scrollToNewAlbum(proxy: proxy)
+                }
+
+                if !viewModel.albums.isEmpty {
+                    Divider()
+                    Button(role: .destructive) {
+                        viewModel.removeAllAlbums()
+                    } label: {
+                        Label("Clear All Albums", systemImage: "trash.fill")
+                            .font(.body.weight(.semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .padding(12)
+                    .help("Remove all album assignments and start over.")
+                }
             }
         }
     }
@@ -65,20 +83,6 @@ struct AlbumSidebarView: View {
                 .foregroundStyle(.secondary)
                 .textCase(nil)
                 .frame(maxWidth: .infinity, alignment: .leading)
-        }
-
-        Section {
-            Button(role: .destructive) {
-                viewModel.removeAllAlbums()
-            } label: {
-                Label("Clear All Albums", systemImage: "trash.fill")
-                    .font(.body.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .help("Remove all album assignments and start over.")
         }
     }
 

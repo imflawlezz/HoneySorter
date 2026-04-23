@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct PhotoGridView: View {
@@ -18,12 +19,13 @@ struct PhotoGridView: View {
                 ForEach(viewModel.photosForGrid) { photo in
                     let album = viewModel.albumForPhoto(photo)
                     let isStart: Bool = {
-                        if case .startSelected(let id) = viewModel.selectionState { return id == photo.id }
+                        if case .editing(let anchorId, _) = viewModel.selectionState { return anchorId == photo.id }
                         return false
                     }()
 
                     Button {
-                        viewModel.selectPhoto(photo)
+                        let flags = NSEvent.modifierFlags
+                        viewModel.handlePhotoClick(photo, modifiers: flags)
                     } label: {
                         PhotoThumbnailView(
                             photo: photo,
