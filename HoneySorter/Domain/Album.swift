@@ -3,36 +3,48 @@ import Foundation
 struct Album: Identifiable, Sendable {
     nonisolated let id: UUID
     nonisolated let number: Int
-    nonisolated let startSortIndex: Int
-    nonisolated let endSortIndex: Int
     nonisolated let isReversed: Bool
-    nonisolated let memberPaths: [String]?
+    /// Indices into the `photos` array (sorted by `sortIndex`).
+    /// Must be strictly increasing; reverse display is computed via `isReversed`.
+    nonisolated let memberIndices: [Int]
+
+    nonisolated init(
+        id: UUID = UUID(),
+        number: Int,
+        isReversed: Bool,
+        memberIndices: [Int]
+    ) {
+        self.id = id
+        self.number = number
+        self.isReversed = isReversed
+        self.memberIndices = memberIndices
+    }
 
     nonisolated init(
         id: UUID = UUID(),
         number: Int,
         startSortIndex: Int,
         endSortIndex: Int,
-        isReversed: Bool,
-        memberPaths: [String]? = nil
+        isReversed: Bool
     ) {
-        self.id = id
-        self.number = number
-        self.startSortIndex = startSortIndex
-        self.endSortIndex = endSortIndex
-        self.isReversed = isReversed
-        self.memberPaths = memberPaths
+        let lo = min(startSortIndex, endSortIndex)
+        let hi = max(startSortIndex, endSortIndex)
+        self.init(
+            id: id,
+            number: number,
+            isReversed: isReversed,
+            memberIndices: Array(lo...hi)
+        )
     }
 
     nonisolated func contains(_ photo: PhotoFile) -> Bool {
-        if let memberPaths {
-            return Set(memberPaths).contains(photo.url.path)
-        }
-        return photo.sortIndex >= startSortIndex && photo.sortIndex <= endSortIndex
+        memberIndices.contains(photo.sortIndex)
     }
 
+    nonisolated var startSortIndex: Int { memberIndices.first ?? 0 }
+    nonisolated var endSortIndex: Int { memberIndices.last ?? 0 }
+
     nonisolated var estimatedCount: Int {
-        if let memberPaths { return memberPaths.count }
-        return endSortIndex - startSortIndex + 1
+        memberIndices.count
     }
 }
