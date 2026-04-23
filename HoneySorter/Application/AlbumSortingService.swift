@@ -112,6 +112,64 @@ enum AlbumSortingService {
         }
     }
 
+    nonisolated static func remapAlbumsAfterPhotoListChange(
+        previousPhotos: [PhotoFile],
+        previousAlbums: [Album],
+        nextPhotos: [PhotoFile],
+        startingAlbumNumber: Int
+    ) -> [Album] {
+        guard !previousAlbums.isEmpty, !nextPhotos.isEmpty else { return [] }
+
+        let pathToSortIndex: [String: Int] = Dictionary(uniqueKeysWithValues: nextPhotos.map { ($0.url.path, $0.sortIndex) })
+
+        var remapped: [Album] = []
+        for album in previousAlbums.sorted(by: { $0.startSortIndex < $1.startSortIndex }) {
+            let paths = Set(photosInAlbum(previousPhotos, album: album).map(\.url.path))
+            let indices = paths.compactMap { pathToSortIndex[$0] }
+            guard !indices.isEmpty else { continue }
+            let uniqueSorted = Array(Set(indices)).sorted()
+            guard let (lo, hi) = largestContiguousIndexRun(uniqueSorted) else { continue }
+            guard lo >= 0, hi < nextPhotos.count, lo <= hi else { continue }
+
+            remapped.append(
+                Album(
+                    number: album.number,
+                    startSortIndex: lo,
+                    endSortIndex: hi,
+                    isReversed: album.isReversed
+                )
+            )
+        }
+
+        return renumberedAlbums(remapped.sorted { $0.startSortIndex < $1.startSortIndex }, startingAlbumNumber: startingAlbumNumber)
+    }
+
+    nonisolated private static func largestContiguousIndexRun(_ sortedUnique: [Int]) -> (Int, Int)? {
+        guard let first = sortedUnique.first else { return nil }
+        var bestLo = first
+        var bestHi = first
+        var curLo = first
+        var curHi = first
+
+        for x in sortedUnique.dropFirst() {
+            if x == curHi + 1 {
+                curHi = x
+            } else {
+                if curHi - curLo > bestHi - bestLo {
+                    bestLo = curLo
+                    bestHi = curHi
+                }
+                curLo = x
+                curHi = x
+            }
+        }
+        if curHi - curLo > bestHi - bestLo {
+            bestLo = curLo
+            bestHi = curHi
+        }
+        return (bestLo, bestHi)
+    }
+
     nonisolated static func nextAlbumNumber(startingAlbumNumber: Int, albumCount: Int) -> Int {
         startingAlbumNumber + albumCount
     }
