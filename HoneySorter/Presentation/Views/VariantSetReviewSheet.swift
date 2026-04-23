@@ -7,14 +7,8 @@ struct VariantSetReviewSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
-                Spacer()
-                Text("Variant Sets")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button("Close") { viewModel.showVariantSetReview = false }
-                    .keyboardShortcut(.cancelAction)
-            }
+            Text("Variant Sets")
+                .font(.title2.weight(.semibold))
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -48,6 +42,8 @@ struct VariantSetReviewSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer()
+                Button("Close") { viewModel.showVariantSetReview = false }
+                    .keyboardShortcut(.cancelAction)
                 Button {
                     viewModel.applyVariantSets()
                 } label: {
@@ -58,7 +54,7 @@ struct VariantSetReviewSheet: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 720, minHeight: 520)
+        .frame(minWidth: 720, idealHeight: 520, maxHeight: 560)
     }
 }
 

@@ -7,14 +7,8 @@ struct DuplicateReviewSheet: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
-                Spacer()
-                Text("Duplicates")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button("Close") { viewModel.showDuplicateReview = false }
-                    .keyboardShortcut(.cancelAction)
-            }
+            Text("Duplicates")
+                .font(.title2.weight(.semibold))
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -48,6 +42,8 @@ struct DuplicateReviewSheet: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                 Spacer()
+                Button("Close") { viewModel.showDuplicateReview = false }
+                    .keyboardShortcut(.cancelAction)
                 Button(role: .destructive) {
                     Task { await viewModel.trashSelectedDuplicates() }
                 } label: {
@@ -58,7 +54,7 @@ struct DuplicateReviewSheet: View {
             }
         }
         .padding(16)
-        .frame(minWidth: 720, minHeight: 520)
+        .frame(minWidth: 720, idealHeight: 520, maxHeight: 560)
     }
 }
 
