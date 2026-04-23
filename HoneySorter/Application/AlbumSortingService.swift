@@ -3,19 +3,11 @@ import Foundation
 enum AlbumSortingService {
 
     nonisolated static func photosInAlbum(_ photos: [PhotoFile], album: Album) -> [PhotoFile] {
-        if let memberPaths = album.memberPaths {
-            let set = Set(memberPaths)
-            let picked = photos.filter { set.contains($0.url.path) }
-            if album.isReversed { return Array(picked.reversed()) }
-            return picked
+        let picked = album.memberIndices.compactMap { idx -> PhotoFile? in
+            guard idx >= 0, idx < photos.count else { return nil }
+            return photos[idx]
         }
-        let lo = album.startSortIndex
-        let hi = album.endSortIndex
-        guard lo >= 0, hi < photos.count, lo <= hi else { return [] }
-        if album.isReversed {
-            return Array(photos[lo...hi].reversed())
-        }
-        return Array(photos[lo...hi])
+        return album.isReversed ? Array(picked.reversed()) : picked
     }
 
     nonisolated static func maxAlbumDigits(startingAlbumNumber: Int, albumCount: Int) -> Int {
@@ -88,22 +80,9 @@ enum AlbumSortingService {
         var nameMap: [UUID: String] = [:]
         let count = albums.count
         let (maxA, maxI) = padWidths(config: config, albumCount: count, albums: albums)
-        let pathToPhoto: [String: PhotoFile] = Dictionary(uniqueKeysWithValues: photos.map { ($0.url.path, $0) })
 
         for album in albums {
-            let inAlbum: [PhotoFile]
-            if let memberPaths = album.memberPaths {
-                inAlbum = memberPaths.compactMap { pathToPhoto[$0] }
-            } else {
-                let lo = max(0, min(album.startSortIndex, photos.count - 1))
-                let hi = max(0, min(album.endSortIndex, photos.count - 1))
-                if lo <= hi {
-                    inAlbum = album.isReversed ? Array(photos[lo...hi].reversed()) : Array(photos[lo...hi])
-                } else {
-                    inAlbum = []
-                }
-            }
-
+            let inAlbum = photosInAlbum(photos, album: album)
             for (idx, p) in inAlbum.enumerated() {
                 albumMap[p.id] = album
                 nameMap[p.id] = formatFilename(
@@ -125,10 +104,8 @@ enum AlbumSortingService {
             Album(
                 id: $0.element.id,
                 number: startingAlbumNumber + $0.offset,
-                startSortIndex: $0.element.startSortIndex,
-                endSortIndex: $0.element.endSortIndex,
                 isReversed: $0.element.isReversed,
-                memberPaths: $0.element.memberPaths
+                memberIndices: $0.element.memberIndices
             )
         }
     }
@@ -145,38 +122,21 @@ enum AlbumSortingService {
 
         var remapped: [Album] = []
         for album in previousAlbums.sorted(by: { $0.startSortIndex < $1.startSortIndex }) {
-            if let memberPaths = album.memberPaths {
-                let kept = memberPaths.filter { pathToSortIndex[$0] != nil }
-                let indices = kept.compactMap { pathToSortIndex[$0] }
-                guard !indices.isEmpty else { continue }
-                let lo = indices.min() ?? 0
-                let hi = indices.max() ?? lo
-                remapped.append(
-                    Album(
-                        id: album.id,
-                        number: album.number,
-                        startSortIndex: lo,
-                        endSortIndex: hi,
-                        isReversed: album.isReversed,
-                        memberPaths: kept
-                    )
-                )
-                continue
+            let indices = album.memberIndices.compactMap { prevIdx -> Int? in
+                guard prevIdx >= 0, prevIdx < previousPhotos.count else { return nil }
+                return pathToSortIndex[previousPhotos[prevIdx].url.path]
             }
-            let paths = Set(photosInAlbum(previousPhotos, album: album).map(\.url.path))
-            let indices = paths.compactMap { pathToSortIndex[$0] }
-            guard !indices.isEmpty else { continue }
             let uniqueSorted = Array(Set(indices)).sorted()
             guard let (lo, hi) = largestContiguousIndexRun(uniqueSorted) else { continue }
             guard lo >= 0, hi < nextPhotos.count, lo <= hi else { continue }
 
+            // Keep explicit membership for stability across edits.
             remapped.append(
                 Album(
                     id: album.id,
                     number: album.number,
-                    startSortIndex: lo,
-                    endSortIndex: hi,
-                    isReversed: album.isReversed
+                    isReversed: album.isReversed,
+                    memberIndices: uniqueSorted
                 )
             )
         }
