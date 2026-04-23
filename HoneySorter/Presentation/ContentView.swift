@@ -21,7 +21,7 @@ struct ContentView: View {
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                if case .startSelected = viewModel.selectionState {
+                if case .editing = viewModel.selectionState {
                     Button("Cancel") { viewModel.cancelSelection() }
                         .keyboardShortcut(.escape, modifiers: [])
                         .help("Cancel the current album selection")
@@ -93,6 +93,21 @@ struct ContentView: View {
             }
 
             ToolbarItem(placement: .primaryAction) {
+                Button {
+                    viewModel.showVariantSetStrictnessDialog = true
+                } label: {
+                    if viewModel.isFindingVariantSets {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "sparkles.2")
+                    }
+                }
+                .disabled(viewModel.photos.isEmpty || viewModel.isFindingVariantSets)
+                .help("Group variant sets into albums")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
                 if viewModel.hasUndoManifest && !viewModel.duplicateMode {
                     Button { viewModel.showUndoConfirmation = true } label: {
                         Label("Revert", systemImage: "arrow.uturn.backward")
@@ -125,13 +140,27 @@ struct ContentView: View {
         .sheet(isPresented: $viewModel.showDuplicateReview) {
             DuplicateReviewSheet(viewModel: viewModel)
         }
+        .sheet(isPresented: $viewModel.showVariantSetReview) {
+            VariantSetReviewSheet(viewModel: viewModel)
+        }
         .alert("No duplicates found", isPresented: $viewModel.showNoDuplicates) {
+            Button("OK", role: .cancel) {}
+        }
+        .alert("No variant sets found", isPresented: $viewModel.showNoVariantSets) {
             Button("OK", role: .cancel) {}
         }
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(viewModel.errorMessage)
+        }
+        .confirmationDialog("Variant set strictness", isPresented: $viewModel.showVariantSetStrictnessDialog, titleVisibility: .visible) {
+            ForEach(VariantSetStrictness.allCases) { s in
+                Button(s.rawValue) {
+                    Task { await viewModel.scanForVariantSets(strictness: s) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .alert(
             viewModel.duplicateMode ? "Confirm Copy" : "Confirm Rename",
@@ -195,6 +224,11 @@ struct ContentView: View {
             Text(viewModel.statusMessage)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+            if viewModel.isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(.leading, 6)
+            }
             Spacer()
             if !viewModel.photos.isEmpty {
                 if viewModel.showUnassignedOnly {
@@ -219,7 +253,7 @@ struct ContentView: View {
         switch viewModel.selectionState {
         case .idle:
             return viewModel.canRename && viewModel.unassignedCount == 0 ? "checkmark.circle" : "hand.point.up"
-        case .startSelected:
+        case .editing:
             return "hand.point.right"
         }
     }
@@ -229,7 +263,7 @@ struct ContentView: View {
         switch viewModel.selectionState {
         case .idle:
             return viewModel.canRename && viewModel.unassignedCount == 0 ? .green : .secondary
-        case .startSelected:
+        case .editing:
             return .accentColor
         }
     }
