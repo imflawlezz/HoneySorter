@@ -3,6 +3,12 @@ import Foundation
 enum AlbumSortingService {
 
     nonisolated static func photosInAlbum(_ photos: [PhotoFile], album: Album) -> [PhotoFile] {
+        if let memberPaths = album.memberPaths {
+            let set = Set(memberPaths)
+            let picked = photos.filter { set.contains($0.url.path) }
+            if album.isReversed { return Array(picked.reversed()) }
+            return picked
+        }
         let lo = album.startSortIndex
         let hi = album.endSortIndex
         guard lo >= 0, hi < photos.count, lo <= hi else { return [] }
@@ -82,9 +88,22 @@ enum AlbumSortingService {
         var nameMap: [UUID: String] = [:]
         let count = albums.count
         let (maxA, maxI) = padWidths(config: config, albumCount: count, albums: albums)
+        let pathToPhoto: [String: PhotoFile] = Dictionary(uniqueKeysWithValues: photos.map { ($0.url.path, $0) })
 
         for album in albums {
-            let inAlbum = photosInAlbum(photos, album: album)
+            let inAlbum: [PhotoFile]
+            if let memberPaths = album.memberPaths {
+                inAlbum = memberPaths.compactMap { pathToPhoto[$0] }
+            } else {
+                let lo = max(0, min(album.startSortIndex, photos.count - 1))
+                let hi = max(0, min(album.endSortIndex, photos.count - 1))
+                if lo <= hi {
+                    inAlbum = album.isReversed ? Array(photos[lo...hi].reversed()) : Array(photos[lo...hi])
+                } else {
+                    inAlbum = []
+                }
+            }
+
             for (idx, p) in inAlbum.enumerated() {
                 albumMap[p.id] = album
                 nameMap[p.id] = formatFilename(
@@ -104,10 +123,12 @@ enum AlbumSortingService {
         let sorted = albums.sorted { $0.startSortIndex < $1.startSortIndex }
         return sorted.enumerated().map {
             Album(
+                id: $0.element.id,
                 number: startingAlbumNumber + $0.offset,
                 startSortIndex: $0.element.startSortIndex,
                 endSortIndex: $0.element.endSortIndex,
-                isReversed: $0.element.isReversed
+                isReversed: $0.element.isReversed,
+                memberPaths: $0.element.memberPaths
             )
         }
     }
@@ -124,6 +145,24 @@ enum AlbumSortingService {
 
         var remapped: [Album] = []
         for album in previousAlbums.sorted(by: { $0.startSortIndex < $1.startSortIndex }) {
+            if let memberPaths = album.memberPaths {
+                let kept = memberPaths.filter { pathToSortIndex[$0] != nil }
+                let indices = kept.compactMap { pathToSortIndex[$0] }
+                guard !indices.isEmpty else { continue }
+                let lo = indices.min() ?? 0
+                let hi = indices.max() ?? lo
+                remapped.append(
+                    Album(
+                        id: album.id,
+                        number: album.number,
+                        startSortIndex: lo,
+                        endSortIndex: hi,
+                        isReversed: album.isReversed,
+                        memberPaths: kept
+                    )
+                )
+                continue
+            }
             let paths = Set(photosInAlbum(previousPhotos, album: album).map(\.url.path))
             let indices = paths.compactMap { pathToSortIndex[$0] }
             guard !indices.isEmpty else { continue }
@@ -133,6 +172,7 @@ enum AlbumSortingService {
 
             remapped.append(
                 Album(
+                    id: album.id,
                     number: album.number,
                     startSortIndex: lo,
                     endSortIndex: hi,
@@ -168,6 +208,24 @@ enum AlbumSortingService {
             bestHi = curHi
         }
         return (bestLo, bestHi)
+    }
+
+    nonisolated static func contiguousIndexRuns(_ sortedUnique: [Int]) -> [(lo: Int, hi: Int)] {
+        guard let first = sortedUnique.first else { return [] }
+        var runs: [(lo: Int, hi: Int)] = []
+        var curLo = first
+        var curHi = first
+        for x in sortedUnique.dropFirst() {
+            if x == curHi + 1 {
+                curHi = x
+            } else {
+                runs.append((curLo, curHi))
+                curLo = x
+                curHi = x
+            }
+        }
+        runs.append((curLo, curHi))
+        return runs
     }
 
     nonisolated static func nextAlbumNumber(startingAlbumNumber: Int, albumCount: Int) -> Int {
@@ -241,11 +299,9 @@ enum AlbumSortingService {
     }
 
     nonisolated static func displayRange(for album: Album, photos: [PhotoFile]) -> String {
-        let lo = album.startSortIndex
-        let hi = album.endSortIndex
-        guard lo >= 0, hi < photos.count, lo <= hi else { return "—" }
-        let first = album.isReversed ? photos[hi] : photos[lo]
-        let last = album.isReversed ? photos[lo] : photos[hi]
+        let inAlbum = photosInAlbum(photos, album: album)
+        guard let first = inAlbum.first else { return "—" }
+        let last = inAlbum.last ?? first
         if first.id == last.id { return first.originalFilename }
         return "\(first.originalFilename) — \(last.originalFilename)"
     }
