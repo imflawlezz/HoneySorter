@@ -85,7 +85,7 @@ struct ContentView: View {
                         ProgressView()
                             .controlSize(.small)
                     } else {
-                        Image(systemName: "doc.on.doc")
+                        Image(systemName: "document.on.trash")
                     }
                 }
                 .disabled(viewModel.photos.isEmpty || viewModel.isFindingDuplicates)
@@ -118,7 +118,7 @@ struct ContentView: View {
 
             ToolbarItem(placement: .confirmationAction) {
                 Button { viewModel.showConfirmation = true } label: {
-                    Image(systemName: viewModel.duplicateMode ? "doc.on.doc.fill" : "checkmark.circle.fill")
+                    Image(systemName: viewModel.duplicateMode ? "document.on.trash.fill" : "checkmark.circle.fill")
                         .font(.body.weight(.semibold))
                         .symbolRenderingMode(.hierarchical)
                 }

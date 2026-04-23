@@ -10,11 +10,19 @@ class PhotoSorterViewModel {
     private var reloadTask: Task<Void, Never>?
 
     var photos: [PhotoFile] = []
-    private(set) var albumByPhotoId: [UUID: Album] = [:]
-    private(set) var newFilenameByPhotoId: [UUID: String] = [:]
-    private var assignmentRebuildTask: Task<Void, Never>?
+    private struct AssignmentIndex: Sendable {
+        var indexByPath: [String: Int]
+        var albumIdByIndex: [UUID?]
+
+        init(photos: [PhotoFile]) {
+            self.indexByPath = Dictionary(uniqueKeysWithValues: photos.map { ($0.url.path, $0.sortIndex) })
+            self.albumIdByIndex = Array(repeating: nil, count: photos.count)
+        }
+    }
+
+    private var assignmentIndex = AssignmentIndex(photos: [])
+    private var albumsById: [UUID: Album] = [:]
     private var selectionUpdateTask: Task<Void, Never>?
-    var isComputingAssignments = false
     var isUpdatingSelection = false
 
     var albums: [Album] = []
@@ -31,12 +39,12 @@ class PhotoSorterViewModel {
 
     var selectionState: SelectionState = .idle
 
-    var separator: Separator = .underscore { didSet { scheduleRebuildAssignmentCaches() } }
-    var zeroPadding: Bool = false { didSet { scheduleRebuildAssignmentCaches() } }
-    var photoIndexPrefix: String = "" { didSet { scheduleRebuildAssignmentCaches() } }
+    var separator: Separator = .underscore
+    var zeroPadding: Bool = false
+    var photoIndexPrefix: String = ""
 
-    var createAlbumFolders: Bool = false { didSet { scheduleRebuildAssignmentCaches() } }
-    var albumFolderPrefix: String = "" { didSet { scheduleRebuildAssignmentCaches() } }
+    var createAlbumFolders: Bool = false
+    var albumFolderPrefix: String = ""
     var duplicateMode: Bool = false
     var outputDirectoryURL: URL?
     private var isAccessingOutputScope = false
@@ -134,7 +142,11 @@ class PhotoSorterViewModel {
 
     var photosForGrid: [PhotoFile] {
         if showUnassignedOnly {
-            return photos.filter { albumByPhotoId[$0.id] == nil }
+            return photos.filter { photo in
+                let i = photo.sortIndex
+                guard i >= 0, i < assignmentIndex.albumIdByIndex.count else { return true }
+                return assignmentIndex.albumIdByIndex[i] == nil
+            }
         }
         return photos
     }
@@ -160,13 +172,12 @@ class PhotoSorterViewModel {
     }
 
     var canRename: Bool { !albums.isEmpty && !isRenaming && !photos.isEmpty }
-    var unassignedCount: Int { max(0, photos.count - albumByPhotoId.count) }
+    var unassignedCount: Int { assignmentIndex.albumIdByIndex.reduce(0) { $0 + ($1 == nil ? 1 : 0) } }
     var isBusy: Bool {
         isLoading
             || isRenaming
             || isFindingDuplicates
             || isFindingVariantSets
-            || isComputingAssignments
             || isUpdatingSelection
     }
 
@@ -183,7 +194,10 @@ class PhotoSorterViewModel {
     }
 
     func albumForPhoto(_ photo: PhotoFile) -> Album? {
-        albumByPhotoId[photo.id]
+        let i = photo.sortIndex
+        guard i >= 0, i < assignmentIndex.albumIdByIndex.count else { return nil }
+        guard let albumId = assignmentIndex.albumIdByIndex[i] else { return nil }
+        return albumsById[albumId]
     }
 
     func photosInAlbum(_ album: Album) -> [PhotoFile] {
@@ -215,7 +229,11 @@ class PhotoSorterViewModel {
     }
 
     func newFilename(for photo: PhotoFile) -> String? {
-        newFilenameByPhotoId[photo.id]
+        guard let album = albumForPhoto(photo) else { return nil }
+        let i = photo.sortIndex
+        guard let pos = album.memberIndices.binaryIndex(of: i) else { return nil }
+        let order = album.isReversed ? (album.memberIndices.count - pos) : (pos + 1)
+        return formattedName(albumNumber: album.number, index: order, ext: photo.fileExtension)
     }
 
     func displayRange(for album: Album) -> String {
@@ -277,7 +295,7 @@ class PhotoSorterViewModel {
             let result = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
             await MainActor.run {
                 photos = result
-                scheduleRebuildAssignmentCaches()
+                rebuildAssignmentIndex()
                 hasUndoManifest = FileRenamer.hasManifest(in: url)
                 isLoading = false
                 startDirectoryMonitoring()
@@ -306,7 +324,7 @@ class PhotoSorterViewModel {
                 selectionState = .idle
             }
             photoPendingRename = nil
-            scheduleRebuildAssignmentCaches()
+            rebuildAssignmentIndex()
             hasUndoManifest = FileRenamer.hasManifest(in: url)
             isLoading = false
         }
@@ -344,7 +362,7 @@ class PhotoSorterViewModel {
                     startingAlbumNumber: startingAlbumNumber
                 )
                 pruneSelectionAfterPhotoChanges()
-                scheduleRebuildAssignmentCaches()
+                rebuildAssignmentIndex()
                 hasUndoManifest = FileRenamer.hasManifest(in: url)
             }
         }
@@ -359,7 +377,7 @@ class PhotoSorterViewModel {
                 albums = []
                 selectionState = .idle
                 photos = newPhotos
-                scheduleRebuildAssignmentCaches()
+                rebuildAssignmentIndex()
                 isLoading = false
             }
         }
@@ -382,14 +400,12 @@ class PhotoSorterViewModel {
             }
             let newAlbum = Album(
                 number: nextAlbumNumber,
-                startSortIndex: photo.sortIndex,
-                endSortIndex: photo.sortIndex,
                 isReversed: false,
-                memberPaths: [photo.url.path]
+                memberIndices: [photo.sortIndex]
             )
             albums.append(newAlbum)
             selectionState = .editing(anchorPhotoId: photo.id, albumId: newAlbum.id)
-            scheduleRebuildAssignmentCaches()
+            rebuildAssignmentIndex()
 
         case .editing(let anchorId, let albumId):
             guard let anchorPhoto = photos.first(where: { $0.id == anchorId }) else {
@@ -428,7 +444,7 @@ class PhotoSorterViewModel {
                     albums: self.albums,
                     albumId: albumId,
                     startingAlbumNumber: self.startingAlbumNumber,
-                    toggledPhotoPath: photo.url.path
+                    toggledPhotoIndex: photo.sortIndex
                 )
             } apply: { newAlbums in
                 self.albums = newAlbums
@@ -450,7 +466,7 @@ class PhotoSorterViewModel {
                 guard let self else { return }
                 apply(newAlbums)
                 self.isUpdatingSelection = false
-                self.scheduleRebuildAssignmentCaches()
+                self.rebuildAssignmentIndex()
             }
         }
     }
@@ -468,10 +484,7 @@ class PhotoSorterViewModel {
             return AlbumSortingService.renumberedAlbums(albums, startingAlbumNumber: startingAlbumNumber)
         }
 
-        let slice = Array(photos[lo...hi])
-        let slicePaths: [String] = slice.map { $0.url.path }
-        let rangePaths = Set(slicePaths)
-        let pathToIndex: [String: Int] = Dictionary(uniqueKeysWithValues: photos.map { ($0.url.path, $0.sortIndex) })
+        let rangeIndices = Set(lo...hi)
 
         var kept: [Album] = []
         kept.reserveCapacity(albums.count)
@@ -482,19 +495,19 @@ class PhotoSorterViewModel {
                 targetNumber = album.number
                 continue
             }
-            kept.append(contentsOf: choppedAlbumAfterRemovingPaths(photos: photos, album: album, remove: rangePaths, pathToIndex: pathToIndex))
+            if let updated = removingIndices(from: album, remove: rangeIndices) {
+                kept.append(updated)
+            }
         }
 
         let number = targetNumber ?? AlbumSortingService.nextAlbumNumber(startingAlbumNumber: startingAlbumNumber, albumCount: kept.count)
-        let memberPaths = isReversed ? Array(slicePaths.reversed()) : slicePaths
+        let memberIndices = Array(lo...hi)
         kept.append(
             Album(
                 id: albumId,
                 number: number,
-                startSortIndex: lo,
-                endSortIndex: hi,
                 isReversed: isReversed,
-                memberPaths: memberPaths
+                memberIndices: memberIndices
             )
         )
 
@@ -506,115 +519,58 @@ class PhotoSorterViewModel {
         albums: [Album],
         albumId: UUID,
         startingAlbumNumber: Int,
-        toggledPhotoPath: String
+        toggledPhotoIndex: Int
     ) -> [Album] {
         guard let target = albums.first(where: { $0.id == albumId }) else {
             return AlbumSortingService.renumberedAlbums(albums, startingAlbumNumber: startingAlbumNumber)
         }
 
-        let pathToIndex: [String: Int] = Dictionary(uniqueKeysWithValues: photos.map { ($0.url.path, $0.sortIndex) })
+        let removeSet: Set<Int> = [toggledPhotoIndex]
 
         var updated: [Album] = []
         updated.reserveCapacity(albums.count)
 
         for album in albums where album.id != albumId {
-            updated.append(contentsOf: choppedAlbumAfterRemovingPaths(
-                photos: photos,
-                album: album,
-                remove: [toggledPhotoPath],
-                pathToIndex: pathToIndex
-            ))
+            if let updatedAlbum = removingIndices(from: album, remove: removeSet) {
+                updated.append(updatedAlbum)
+            }
         }
 
-        var memberPaths: Set<String> = {
-            if let paths = target.memberPaths { return Set(paths) }
-            let lo = max(0, min(target.startSortIndex, photos.count - 1))
-            let hi = max(0, min(target.endSortIndex, photos.count - 1))
-            if lo <= hi {
-                let paths = photos[lo...hi].map { $0.url.path }
-                return Set(target.isReversed ? paths.reversed() : paths)
-            }
-            return []
-        }()
-
-        if memberPaths.contains(toggledPhotoPath) {
-            memberPaths.remove(toggledPhotoPath)
+        var memberIndices = target.memberIndices
+        if let existingIdx = memberIndices.firstIndex(of: toggledPhotoIndex) {
+            memberIndices.remove(at: existingIdx)
         } else {
-            memberPaths.insert(toggledPhotoPath)
+            // Keep stable album order (global sortIndex order).
+            let insertion = memberIndices.insertionIndex(of: toggledPhotoIndex)
+            memberIndices.insert(toggledPhotoIndex, at: insertion)
         }
 
-        let sortedPaths = memberPaths
-            .compactMap { p -> (p: String, i: Int)? in
-                guard let i = pathToIndex[p] else { return nil }
-                return (p, i)
-            }
-            .sorted { $0.i < $1.i }
-            .map(\.p)
-
-        guard !sortedPaths.isEmpty else {
+        guard !memberIndices.isEmpty else {
             return AlbumSortingService.renumberedAlbums(updated, startingAlbumNumber: startingAlbumNumber)
         }
-
-        let indices = sortedPaths.compactMap { pathToIndex[$0] }
-        let lo = indices.min() ?? 0
-        let hi = indices.max() ?? lo
 
         updated.append(
             Album(
                 id: target.id,
                 number: target.number,
-                startSortIndex: lo,
-                endSortIndex: hi,
                 isReversed: false,
-                memberPaths: sortedPaths
+                memberIndices: memberIndices
             )
         )
 
         return AlbumSortingService.renumberedAlbums(updated, startingAlbumNumber: startingAlbumNumber)
     }
 
-    nonisolated private static func choppedAlbumAfterRemovingPaths(
-        photos: [PhotoFile],
-        album: Album,
-        remove pathsToRemove: Set<String>,
-        pathToIndex: [String: Int]
-    ) -> [Album] {
-        let existingPaths: [String]
-        if let memberPaths = album.memberPaths {
-            existingPaths = memberPaths
-        } else {
-            existingPaths = AlbumSortingService.photosInAlbum(photos, album: album).map { $0.url.path }
-        }
-
-        let remainingPaths = existingPaths.filter { !pathsToRemove.contains($0) }
-        let remainingIndices = remainingPaths.compactMap { pathToIndex[$0] }
-        if remainingIndices.isEmpty { return [] }
-
-        let uniqueSorted = Array(Set(remainingIndices)).sorted()
-        let runs = AlbumSortingService.contiguousIndexRuns(uniqueSorted)
-
-        let indexToPath: [Int: String] = Dictionary(uniqueKeysWithValues: remainingPaths.compactMap { p in
-            guard let i = pathToIndex[p] else { return nil }
-            return (i, p)
-        })
-
-        var result: [Album] = []
-        result.reserveCapacity(runs.count)
-        for (runIdx, run) in runs.enumerated() {
-            let pathsInRun = (run.lo...run.hi).compactMap { indexToPath[$0] }
-            guard !pathsInRun.isEmpty else { continue }
-            result.append(
-                Album(
-                    id: runIdx == 0 ? album.id : UUID(),
-                    number: album.number,
-                    startSortIndex: run.lo,
-                    endSortIndex: run.hi,
-                    isReversed: false,
-                    memberPaths: pathsInRun
-                )
-            )
-        }
-        return result
+    nonisolated private static func removingIndices(from album: Album, remove indicesToRemove: Set<Int>) -> Album? {
+        let remaining = album.memberIndices.filter { !indicesToRemove.contains($0) }
+        guard !remaining.isEmpty else { return nil }
+        let uniqueSorted = Array(Set(remaining)).sorted()
+        return Album(
+            id: album.id,
+            number: album.number,
+            isReversed: album.isReversed,
+            memberIndices: uniqueSorted
+        )
     }
 
     func cancelSelection() { selectionState = .idle }
@@ -627,37 +583,21 @@ class PhotoSorterViewModel {
     func removeAllAlbums() {
         albums.removeAll()
         selectionState = .idle
-        scheduleRebuildAssignmentCaches()
+        rebuildAssignmentIndex()
     }
 
     private func renumberAlbums() {
         albums = AlbumSortingService.renumberedAlbums(albums, startingAlbumNumber: startingAlbumNumber)
-        scheduleRebuildAssignmentCaches()
+        rebuildAssignmentIndex()
     }
 
-    private func scheduleRebuildAssignmentCaches() {
-        assignmentRebuildTask?.cancel()
-        isComputingAssignments = true
-
-        let photosSnapshot = photos
-        let albumsSnapshot = albums
-        let configSnapshot = namingConfiguration
-
-        assignmentRebuildTask = Task.detached(priority: .userInitiated) { [weak self] in
-            // Coalesce rapid shift-clicks/updates into one rebuild.
-            try? await Task.sleep(for: .milliseconds(35))
-            guard !Task.isCancelled else { return }
-            let caches = AlbumSortingService.assignmentCaches(
-                photos: photosSnapshot,
-                albums: albumsSnapshot,
-                config: configSnapshot
-            )
-            guard !Task.isCancelled else { return }
-            await MainActor.run {
-                guard let self else { return }
-                self.albumByPhotoId = caches.albumByPhotoId
-                self.newFilenameByPhotoId = caches.newFilenameByPhotoId
-                self.isComputingAssignments = false
+    private func rebuildAssignmentIndex() {
+        assignmentIndex = AssignmentIndex(photos: photos)
+        albumsById = Dictionary(uniqueKeysWithValues: albums.map { ($0.id, $0) })
+        guard !photos.isEmpty else { return }
+        for album in albums {
+            for i in album.memberIndices where i >= 0 && i < assignmentIndex.albumIdByIndex.count {
+                assignmentIndex.albumIdByIndex[i] = album.id
             }
         }
     }
@@ -827,62 +767,31 @@ class PhotoSorterViewModel {
             return (a.first?.lastPathComponent ?? "") < (b.first?.lastPathComponent ?? "")
         }
 
-        let newAssignedPaths = Set(sortedGroups.flatMap { $0.map(\.path) })
+        let newAssignedIndices = Set(sortedGroups.flatMap { $0.compactMap { pathToIndex[$0.path] } })
 
-        var choppedExisting: [Album] = []
-        choppedExisting.reserveCapacity(albums.count)
+        var keptExisting: [Album] = []
+        keptExisting.reserveCapacity(albums.count)
         for album in albums {
-            let existingPaths: [String]
-            if let memberPaths = album.memberPaths {
-                existingPaths = memberPaths
-            } else {
-                existingPaths = AlbumSortingService.photosInAlbum(photos, album: album).map { $0.url.path }
-            }
-
-            let remainingPaths = existingPaths.filter { !newAssignedPaths.contains($0) }
-            let remainingIndices = remainingPaths.compactMap { pathToIndex[$0] }
-            if remainingIndices.isEmpty { continue }
-
-            let runs = AlbumSortingService.contiguousIndexRuns(Array(Set(remainingIndices)).sorted())
-            let indexToPath: [Int: String] = Dictionary(uniqueKeysWithValues: remainingPaths.compactMap { p in
-                guard let i = pathToIndex[p] else { return nil }
-                return (i, p)
-            })
-
-            for run in runs {
-                let pathsInRun = (run.lo...run.hi).compactMap { indexToPath[$0] }
-                guard !pathsInRun.isEmpty else { continue }
-                choppedExisting.append(
-                    Album(
-                        number: album.number,
-                        startSortIndex: run.lo,
-                        endSortIndex: run.hi,
-                        isReversed: false,
-                        memberPaths: pathsInRun
-                    )
-                )
+            if let updated = Self.removingIndices(from: album, remove: newAssignedIndices) {
+                keptExisting.append(updated)
             }
         }
 
         let baseNumber = startingAlbumNumber
         let newAlbums: [Album] = sortedGroups.enumerated().compactMap { (offset, urls) in
-            let paths = urls.map(\.path)
-            let indices = paths.compactMap { pathToIndex[$0] }
-            guard let lo = indices.min() else { return nil }
-            let hi = indices.max() ?? lo
+            let indices = urls.compactMap { pathToIndex[$0.path] }.sorted()
+            guard !indices.isEmpty else { return nil }
             return Album(
                 number: baseNumber + offset,
-                startSortIndex: lo,
-                endSortIndex: hi,
                 isReversed: false,
-                memberPaths: paths
+                memberIndices: indices
             )
         }
 
-        let combined = (choppedExisting + newAlbums).sorted { $0.startSortIndex < $1.startSortIndex }
+        let combined = (keptExisting + newAlbums).sorted { $0.startSortIndex < $1.startSortIndex }
         albums = AlbumSortingService.renumberedAlbums(combined, startingAlbumNumber: startingAlbumNumber)
         selectionState = .idle
-        scheduleRebuildAssignmentCaches()
+        rebuildAssignmentIndex()
         showVariantSetReview = false
         variantSetReviewGroups = []
     }
@@ -935,5 +844,53 @@ class PhotoSorterViewModel {
         directoryMonitor.stop()
         if let u = directoryURL, isAccessingSecurityScope { u.stopAccessingSecurityScopedResource() }
         if let u = outputDirectoryURL, isAccessingOutputScope { u.stopAccessingSecurityScopedResource() }
+    }
+}
+
+private extension Array where Element == Int {
+    func insertionIndex(of x: Int) -> Int {
+        var lo = 0
+        var hi = count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if self[mid] < x {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        return lo
+    }
+
+    func binaryContains(_ x: Int) -> Bool {
+        var lo = 0
+        var hi = count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let v = self[mid]
+            if v == x { return true }
+            if v < x {
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        return false
+    }
+
+    func binaryIndex(of x: Int) -> Int? {
+        var lo = 0
+        var hi = count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let v = self[mid]
+            if v == x { return mid }
+            if v < x {
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        return nil
     }
 }
