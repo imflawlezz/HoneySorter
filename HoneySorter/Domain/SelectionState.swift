@@ -2,5 +2,5 @@ import Foundation
 
 enum SelectionState: Equatable {
     case idle
-    case startSelected(UUID)
+    case editing(anchorPhotoId: UUID, albumId: UUID)
 }
