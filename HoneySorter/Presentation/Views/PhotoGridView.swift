@@ -41,6 +41,10 @@ struct PhotoGridView: View {
                         Button("Rename…") {
                             viewModel.photoPendingRename = photo
                         }
+                        Divider()
+                        Button("Move to Trash…", role: .destructive) {
+                            Task { await viewModel.trashPhotos([photo]) }
+                        }
                     }
                 }
             }
