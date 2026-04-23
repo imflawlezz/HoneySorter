@@ -118,7 +118,7 @@ struct ContentView: View {
 
             ToolbarItem(placement: .confirmationAction) {
                 Button { viewModel.showConfirmation = true } label: {
-                    Image(systemName: viewModel.duplicateMode ? "document.on.trash.fill" : "checkmark.circle.fill")
+                    Image(systemName: viewModel.duplicateMode ? "doc.on.doc.fill" : "checkmark")
                         .font(.body.weight(.semibold))
                         .symbolRenderingMode(.hierarchical)
                 }
