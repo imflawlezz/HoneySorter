@@ -19,7 +19,7 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			sNmcIA+JgFjo7MeD9x5nCmFvLXI=
+			s80qtwgn5cYs09BdL9WmuiuxmTw=
 			</data>
 			<key>requirement</key>
 			<string>identifier "HoneySorter.debug" and anchor apple generic and certificate leaf[subject.CN] = "Apple Development: imflawlezz13@gmail.com (BVP4DGZT5F)" and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */</string>
