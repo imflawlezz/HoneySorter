@@ -10,7 +10,16 @@ struct AlbumSidebarView: View {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         namingSection
                         outputSection
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .frame(maxHeight: 340)
+                Divider()
 
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 16) {
                         if viewModel.albums.isEmpty {
                             ContentUnavailableView {
                                 Label("No Albums Yet", systemImage: "rectangle.stack")

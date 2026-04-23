@@ -43,6 +43,15 @@ struct PhotoGridView: View {
                         Button("Rename…") {
                             viewModel.photoPendingRename = photo
                         }
+                        if viewModel.albumForPhoto(photo) != nil {
+                            Divider()
+                            Button("Unassign from Album") {
+                                viewModel.unassignPhotoFromAlbum(photo)
+                            }
+                            Button("Remove Album", role: .destructive) {
+                                viewModel.removeAlbumContainingPhoto(photo)
+                            }
+                        }
                         Divider()
                         Button("Move to Trash…", role: .destructive) {
                             Task { await viewModel.trashPhotos([photo]) }
