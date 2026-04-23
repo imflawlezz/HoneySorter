@@ -580,6 +580,34 @@ class PhotoSorterViewModel {
         renumberAlbums()
     }
 
+    func removeAlbumContainingPhoto(_ photo: PhotoFile) {
+        guard let album = albumForPhoto(photo) else { return }
+        removeAlbum(album)
+    }
+
+    func unassignPhotoFromAlbum(_ photo: PhotoFile) {
+        let i = photo.sortIndex
+        guard i >= 0, i < assignmentIndex.albumIdByIndex.count else { return }
+        guard let albumId = assignmentIndex.albumIdByIndex[i] else { return }
+
+        isUpdatingSelection = true
+        selectionUpdateTask?.cancel()
+        selectionUpdateTask = Task.detached(priority: .userInitiated) { [photos = self.photos, albums = self.albums, albumId, idx = i, starting = self.startingAlbumNumber] in
+            let updatedAlbums: [Album] = albums.compactMap { album in
+                guard album.id == albumId else { return album }
+                let remaining = album.memberIndices.filter { $0 != idx }
+                guard !remaining.isEmpty else { return nil }
+                return Album(id: album.id, number: album.number, isReversed: album.isReversed, memberIndices: remaining)
+            }
+            let renumbered = AlbumSortingService.renumberedAlbums(updatedAlbums, startingAlbumNumber: starting)
+            await MainActor.run {
+                self.albums = renumbered
+                self.isUpdatingSelection = false
+                self.rebuildAssignmentIndex()
+            }
+        }
+    }
+
     func removeAllAlbums() {
         albums.removeAll()
         selectionState = .idle

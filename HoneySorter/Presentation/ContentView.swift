@@ -18,6 +18,7 @@ struct ContentView: View {
                 }
                 RenameProgressView(isRenaming: viewModel.isRenaming)
             }
+            .safeAreaInset(edge: .bottom) { statusBar }
         }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
@@ -36,7 +37,7 @@ struct ContentView: View {
                 )
             }
 
-            ToolbarItemGroup(placement: .automatic) {
+            ToolbarItemGroup(placement: .navigation) {
                 Menu {
                     ForEach(PhotoOrdering.allCases) { ordering in
                         Button {
@@ -77,7 +78,7 @@ struct ContentView: View {
                 .help("Show only photos not in an album")
             }
 
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItemGroup(placement: .primaryAction) {
                 Button {
                     Task { await viewModel.scanForDuplicates() }
                 } label: {
@@ -90,9 +91,7 @@ struct ContentView: View {
                 }
                 .disabled(viewModel.photos.isEmpty || viewModel.isFindingDuplicates)
                 .help("Find duplicate photos")
-            }
 
-            ToolbarItem(placement: .primaryAction) {
                 Button {
                     viewModel.showVariantSetStrictnessDialog = true
                 } label: {
@@ -107,7 +106,7 @@ struct ContentView: View {
                 .help("Group variant sets into albums")
             }
 
-            ToolbarItem(placement: .primaryAction) {
+            ToolbarItem(placement: .secondaryAction) {
                 if viewModel.hasUndoManifest && !viewModel.duplicateMode {
                     Button { viewModel.showUndoConfirmation = true } label: {
                         Label("Revert", systemImage: "arrow.uturn.backward")
@@ -132,7 +131,6 @@ struct ContentView: View {
                 .accessibilityLabel(viewModel.duplicateMode ? "Copy All" : "Rename All")
             }
         }
-        .overlay(alignment: .bottom) { statusBar }
         .background(WindowTitleUpdater())
         .sheet(item: $viewModel.photoPendingRename) { photo in
             SingleFileRenameSheet(photo: photo, viewModel: viewModel)
@@ -243,7 +241,7 @@ struct ContentView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(.bar)
     }
 
