@@ -14,7 +14,6 @@ class PhotoSorterViewModel {
     private(set) var newFilenameByPhotoId: [UUID: String] = [:]
 
     var albums: [Album] = []
-    private var assignmentRebuildGeneration: UInt64 = 0
     var startingAlbumNumber: Int = 1 {
         didSet {
             let clamped = max(1, min(9999, startingAlbumNumber))
@@ -49,6 +48,28 @@ class PhotoSorterViewModel {
     var showUndoConfirmation = false
 
     var photoPendingRename: PhotoFile?
+
+    var isFindingDuplicates = false
+    var showDuplicateReview = false
+    var duplicateResultMessage = ""
+    var showNoDuplicates = false
+
+    struct DuplicateReviewItem: Identifiable, Sendable {
+        nonisolated let id = UUID()
+        nonisolated let url: URL
+        nonisolated let filename: String
+        var isSelectedForTrash: Bool
+    }
+
+    struct DuplicateReviewGroup: Identifiable, Sendable {
+        nonisolated let id = UUID()
+        var items: [DuplicateReviewItem]
+    }
+
+    var duplicateReviewGroups: [DuplicateReviewGroup] = []
+    var hasDuplicateTrashCandidates: Bool {
+        duplicateReviewGroups.contains { $0.items.contains(where: { $0.isSelectedForTrash }) }
+    }
 
     var showUnassignedOnly: Bool = false
 
@@ -227,14 +248,26 @@ class PhotoSorterViewModel {
         }
     }
 
-    func rescanCurrentDirectory() async {
+    func rescanCurrentDirectory(preserveAlbumAssignments: Bool = false) async {
         guard let url = directoryURL else { return }
+        let oldPhotos = photos
+        let oldAlbums = albums
         await MainActor.run { isLoading = true }
         let result = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
         await MainActor.run {
             photos = result
-            albums = []
-            selectionState = .idle
+            if preserveAlbumAssignments {
+                albums = AlbumSortingService.remapAlbumsAfterPhotoListChange(
+                    previousPhotos: oldPhotos,
+                    previousAlbums: oldAlbums,
+                    nextPhotos: result,
+                    startingAlbumNumber: startingAlbumNumber
+                )
+                pruneSelectionAfterPhotoChanges()
+            } else {
+                albums = []
+                selectionState = .idle
+            }
             photoPendingRename = nil
             rebuildAssignmentCaches()
             hasUndoManifest = FileRenamer.hasManifest(in: url)
@@ -260,16 +293,20 @@ class PhotoSorterViewModel {
 
     private func reloadCurrentDirectory() {
         guard let url = directoryURL else { return }
-        let previousCount = photos.count
+        let oldPhotos = photos
+        let oldAlbums = albums
 
         Task {
             let newPhotos = await PhotoDirectoryScanner.loadImages(from: url, ordering: photoOrdering)
             await MainActor.run {
-                if newPhotos.count != previousCount {
-                    albums = []
-                    selectionState = .idle
-                }
                 photos = newPhotos
+                albums = AlbumSortingService.remapAlbumsAfterPhotoListChange(
+                    previousPhotos: oldPhotos,
+                    previousAlbums: oldAlbums,
+                    nextPhotos: newPhotos,
+                    startingAlbumNumber: startingAlbumNumber
+                )
+                pruneSelectionAfterPhotoChanges()
                 rebuildAssignmentCaches()
                 hasUndoManifest = FileRenamer.hasManifest(in: url)
             }
@@ -343,24 +380,22 @@ class PhotoSorterViewModel {
     }
 
     private func rebuildAssignmentCaches() {
-        assignmentRebuildGeneration += 1
-        let gen = assignmentRebuildGeneration
-        let snapshotPhotos = photos
-        let snapshotAlbums = albums
-        let config = namingConfiguration
+        let caches = AlbumSortingService.assignmentCaches(
+            photos: photos,
+            albums: albums,
+            config: namingConfiguration
+        )
+        albumByPhotoId = caches.albumByPhotoId
+        newFilenameByPhotoId = caches.newFilenameByPhotoId
+    }
 
-        Task {
-            let caches = await Task.detached(priority: .userInitiated) {
-                AlbumSortingService.assignmentCaches(
-                    photos: snapshotPhotos,
-                    albums: snapshotAlbums,
-                    config: config
-                )
-            }.value
-            await MainActor.run {
-                guard gen == assignmentRebuildGeneration else { return }
-                albumByPhotoId = caches.albumByPhotoId
-                newFilenameByPhotoId = caches.newFilenameByPhotoId
+    private func pruneSelectionAfterPhotoChanges() {
+        switch selectionState {
+        case .idle:
+            break
+        case .startSelected(let id):
+            if !photos.contains(where: { $0.id == id }) {
+                selectionState = .idle
             }
         }
     }
@@ -438,7 +473,7 @@ class PhotoSorterViewModel {
             try await Task.detached {
                 try FileRenamer.executeRename(in: dir, operations: ops)
             }.value
-            await rescanCurrentDirectory()
+            await rescanCurrentDirectory(preserveAlbumAssignments: true)
             resultMessage = "Renamed to “\(ops[0].destinationURL.lastPathComponent)”."
             showComplete = true
             photoPendingRename = nil
@@ -447,6 +482,75 @@ class PhotoSorterViewModel {
             showError = true
         }
         isRenaming = false
+    }
+
+    func trashPhotos(_ photos: [PhotoFile]) async {
+        let urls = photos.map(\.url)
+        isRenaming = true
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                _ = try FileTrashService.moveToTrash(urls: urls)
+            }.value
+            await rescanCurrentDirectory(preserveAlbumAssignments: true)
+        } catch {
+            errorMessage = error.localizedDescription
+            showError = true
+        }
+        isRenaming = false
+    }
+
+    func scanForDuplicates() async {
+        guard !isFindingDuplicates else { return }
+        isFindingDuplicates = true
+        defer { isFindingDuplicates = false }
+
+        let urls = photos.map(\.url)
+        let result = await DuplicatePhotoService.findExactDuplicates(urls: urls, maxConcurrentHashes: 4)
+        applyDuplicateGroups(result.groups)
+    }
+
+    private func applyDuplicateGroups(_ groups: [[URL]]) {
+        if groups.isEmpty {
+            duplicateReviewGroups = []
+            showDuplicateReview = false
+            showNoDuplicates = true
+            return
+        }
+
+        duplicateReviewGroups = groups.map { urls in
+            var items: [DuplicateReviewItem] = urls.enumerated().map { idx, u in
+                DuplicateReviewItem(
+                    url: u,
+                    filename: u.lastPathComponent,
+                    isSelectedForTrash: idx != 0
+                )
+            }
+            if items.allSatisfy({ $0.isSelectedForTrash }) {
+                items[0].isSelectedForTrash = false
+            }
+            return DuplicateReviewGroup(items: items)
+        }
+
+        duplicateResultMessage = "Uncheck anything that isn’t a duplicate."
+        showDuplicateReview = true
+    }
+
+    func trashSelectedDuplicates() async {
+        let urls = duplicateReviewGroups.flatMap { $0.items.filter(\.isSelectedForTrash).map(\.url) }
+        guard !urls.isEmpty else { return }
+        isRenaming = true
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                _ = try FileTrashService.moveToTrash(urls: urls)
+            }.value
+            await rescanCurrentDirectory(preserveAlbumAssignments: true)
+        } catch {
+            errorMessage = error.localizedDescription
+            showError = true
+        }
+        isRenaming = false
+        duplicateReviewGroups = []
+        showDuplicateReview = false
     }
 
     deinit {

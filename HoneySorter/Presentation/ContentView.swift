@@ -78,6 +78,21 @@ struct ContentView: View {
             }
 
             ToolbarItem(placement: .primaryAction) {
+                Button {
+                    Task { await viewModel.scanForDuplicates() }
+                } label: {
+                    if viewModel.isFindingDuplicates {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "doc.on.doc")
+                    }
+                }
+                .disabled(viewModel.photos.isEmpty || viewModel.isFindingDuplicates)
+                .help("Find duplicate photos")
+            }
+
+            ToolbarItem(placement: .primaryAction) {
                 if viewModel.hasUndoManifest && !viewModel.duplicateMode {
                     Button { viewModel.showUndoConfirmation = true } label: {
                         Label("Revert", systemImage: "arrow.uturn.backward")
@@ -106,6 +121,12 @@ struct ContentView: View {
         .background(WindowTitleUpdater())
         .sheet(item: $viewModel.photoPendingRename) { photo in
             SingleFileRenameSheet(photo: photo, viewModel: viewModel)
+        }
+        .sheet(isPresented: $viewModel.showDuplicateReview) {
+            DuplicateReviewSheet(viewModel: viewModel)
+        }
+        .alert("No duplicates found", isPresented: $viewModel.showNoDuplicates) {
+            Button("OK", role: .cancel) {}
         }
         .alert("Error", isPresented: $viewModel.showError) {
             Button("OK", role: .cancel) {}
