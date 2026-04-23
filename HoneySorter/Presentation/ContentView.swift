@@ -18,6 +18,7 @@ struct ContentView: View {
                 }
                 RenameProgressView(isRenaming: viewModel.isRenaming)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .safeAreaInset(edge: .bottom) { statusBar }
         }
         .toolbar {
