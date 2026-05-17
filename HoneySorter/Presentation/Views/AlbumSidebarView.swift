@@ -184,6 +184,21 @@ struct AlbumSidebarView: View {
                         .controlSize(.small)
                 }
                 .help("Folder where renamed copies will be saved. Defaults to a 'Sorted' subfolder.")
+
+                Toggle("Compress Output as ZIP", isOn: $viewModel.compressOutputAsZip)
+                    .help("Create a .zip archive")
+
+                if viewModel.compressOutputAsZip {
+                    HStack {
+                        Text("Archive name")
+                        Spacer()
+                        TextField("Optional", text: $viewModel.outputArchiveName)
+                            .frame(minWidth: 160)
+                            .textFieldStyle(.roundedBorder)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    .help("Name for the .zip file")
+                }
             }
         } header: {
             Text("Output")
