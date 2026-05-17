@@ -105,6 +105,7 @@ enum AlbumSortingService {
                 id: $0.element.id,
                 number: startingAlbumNumber + $0.offset,
                 isReversed: $0.element.isReversed,
+                preservesClickOrder: $0.element.preservesClickOrder,
                 memberIndices: $0.element.memberIndices
             )
         }
@@ -122,20 +123,35 @@ enum AlbumSortingService {
 
         var remapped: [Album] = []
         for album in previousAlbums.sorted(by: { $0.startSortIndex < $1.startSortIndex }) {
-            let indices = album.memberIndices.compactMap { prevIdx -> Int? in
+            let kept = album.memberIndices.compactMap { prevIdx -> Int? in
                 guard prevIdx >= 0, prevIdx < previousPhotos.count else { return nil }
                 return pathToSortIndex[previousPhotos[prevIdx].url.path]
             }
-            let uniqueSorted = Array(Set(indices)).sorted()
+            guard !kept.isEmpty else { continue }
+
+            if album.preservesClickOrder {
+                remapped.append(
+                    Album(
+                        id: album.id,
+                        number: album.number,
+                        isReversed: album.isReversed,
+                        preservesClickOrder: true,
+                        memberIndices: kept
+                    )
+                )
+                continue
+            }
+
+            let uniqueSorted = Array(Set(kept)).sorted()
             guard let (lo, hi) = largestContiguousIndexRun(uniqueSorted) else { continue }
             guard lo >= 0, hi < nextPhotos.count, lo <= hi else { continue }
 
-            // Keep explicit membership for stability across edits.
             remapped.append(
                 Album(
                     id: album.id,
                     number: album.number,
                     isReversed: album.isReversed,
+                    preservesClickOrder: false,
                     memberIndices: uniqueSorted
                 )
             )
