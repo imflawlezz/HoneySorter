@@ -4,19 +4,20 @@ struct Album: Identifiable, Sendable {
     nonisolated let id: UUID
     nonisolated let number: Int
     nonisolated let isReversed: Bool
-    /// Indices into the `photos` array (sorted by `sortIndex`).
-    /// Must be strictly increasing; reverse display is computed via `isReversed`.
+    nonisolated let preservesClickOrder: Bool
     nonisolated let memberIndices: [Int]
 
     nonisolated init(
         id: UUID = UUID(),
         number: Int,
         isReversed: Bool,
+        preservesClickOrder: Bool = false,
         memberIndices: [Int]
     ) {
         self.id = id
         self.number = number
         self.isReversed = isReversed
+        self.preservesClickOrder = preservesClickOrder
         self.memberIndices = memberIndices
     }
 
@@ -33,6 +34,7 @@ struct Album: Identifiable, Sendable {
             id: id,
             number: number,
             isReversed: isReversed,
+            preservesClickOrder: false,
             memberIndices: Array(lo...hi)
         )
     }

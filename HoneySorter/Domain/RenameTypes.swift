@@ -68,6 +68,7 @@ enum RenameError: LocalizedError {
     case undoManifestNotFound
     case undoManifestCorrupted
     case noDirectory
+    case archiveFailed(String)
 
     nonisolated var errorDescription: String? {
         switch self {
@@ -79,6 +80,7 @@ enum RenameError: LocalizedError {
         case .undoManifestNotFound: return "No previous operation found to revert."
         case .undoManifestCorrupted: return "The revert record is damaged."
         case .noDirectory: return "No folder selected."
+        case .archiveFailed(let msg): return "Could not create archive: \(msg)"
         }
     }
 }
