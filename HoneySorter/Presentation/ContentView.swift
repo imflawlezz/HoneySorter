@@ -172,7 +172,11 @@ struct ContentView: View {
         } message: {
             let count = viewModel.albums.flatMap { viewModel.photosInAlbum($0) }.count
             if viewModel.duplicateMode {
-                Text("\(count) file(s) will be copied to \(viewModel.outputDisplayPath) across \(viewModel.albums.count) album(s). Originals will not be modified.")
+                if viewModel.compressOutputAsZip {
+                    Text("\(count) file(s) will be packaged into “\(viewModel.resolvedOutputArchiveBaseName).zip” (\(viewModel.outputDisplayPath)). No Sorted folder will be created. Originals will not be modified.")
+                } else {
+                    Text("\(count) file(s) will be copied to \(viewModel.outputDisplayPath) across \(viewModel.albums.count) album(s). Originals will not be modified.")
+                }
             } else {
                 Text("\(count) file(s) across \(viewModel.albums.count) album(s) will be renamed. A revert record will be saved automatically.")
             }

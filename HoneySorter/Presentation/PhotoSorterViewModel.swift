@@ -46,6 +46,8 @@ class PhotoSorterViewModel {
     var createAlbumFolders: Bool = false
     var albumFolderPrefix: String = ""
     var duplicateMode: Bool = false
+    var compressOutputAsZip: Bool = false
+    var outputArchiveName: String = ""
     var outputDirectoryURL: URL?
     private var isAccessingOutputScope = false
 
@@ -165,7 +167,7 @@ class PhotoSorterViewModel {
         case .editing(let anchorId, let albumId):
             let albumNumber = albums.first(where: { $0.id == albumId })?.number ?? nextAlbumNumber
             if let p = photos.first(where: { $0.id == anchorId }) {
-                return "First photo: \(p.originalFilename) — now select the last photo for Album \(albumNumber). (Shift‑click adds/removes single photos.)"
+                return "First photo: \(p.originalFilename) — now select the last photo for Album \(albumNumber). (Shift‑click adds/removes photos in click order.)"
             }
             return "Select the last photo for this album."
         }
@@ -188,7 +190,26 @@ class PhotoSorterViewModel {
         return directoryURL
     }
 
+    var archiveDestinationDirectory: URL? {
+        guard let srcDir = directoryURL else { return nil }
+        return outputDirectoryURL ?? srcDir
+    }
+
+    var resolvedOutputArchiveBaseName: String {
+        let trimmed = outputArchiveName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { return trimmed }
+        if compressOutputAsZip { return "Sorted" }
+        return effectiveOutputDirectory?.lastPathComponent ?? "Sorted"
+    }
+
     var outputDisplayPath: String {
+        if compressOutputAsZip, duplicateMode {
+            let name = resolvedOutputArchiveBaseName
+            if let dest = archiveDestinationDirectory {
+                return "\(name).zip in \(dest.lastPathComponent)/"
+            }
+            return "\(name).zip"
+        }
         if let url = outputDirectoryURL { return url.lastPathComponent }
         return "Sorted/"
     }
@@ -231,7 +252,7 @@ class PhotoSorterViewModel {
     func newFilename(for photo: PhotoFile) -> String? {
         guard let album = albumForPhoto(photo) else { return nil }
         let i = photo.sortIndex
-        guard let pos = album.memberIndices.binaryIndex(of: i) else { return nil }
+        guard let pos = album.memberIndices.firstIndex(of: i) else { return nil }
         let order = album.isReversed ? (album.memberIndices.count - pos) : (pos + 1)
         return formattedName(albumNumber: album.number, index: order, ext: photo.fileExtension)
     }
@@ -507,6 +528,7 @@ class PhotoSorterViewModel {
                 id: albumId,
                 number: number,
                 isReversed: isReversed,
+                preservesClickOrder: false,
                 memberIndices: memberIndices
             )
         )
@@ -537,12 +559,16 @@ class PhotoSorterViewModel {
         }
 
         var memberIndices = target.memberIndices
-        if let existingIdx = memberIndices.firstIndex(of: toggledPhotoIndex) {
-            memberIndices.remove(at: existingIdx)
+        var preservesClickOrder = target.preservesClickOrder
+
+        if let existingPos = memberIndices.firstIndex(of: toggledPhotoIndex) {
+            memberIndices.remove(at: existingPos)
         } else {
-            // Keep stable album order (global sortIndex order).
-            let insertion = memberIndices.insertionIndex(of: toggledPhotoIndex)
-            memberIndices.insert(toggledPhotoIndex, at: insertion)
+            if !preservesClickOrder {
+                memberIndices = AlbumSortingService.photosInAlbum(photos, album: target).map(\.sortIndex)
+                preservesClickOrder = true
+            }
+            memberIndices.append(toggledPhotoIndex)
         }
 
         guard !memberIndices.isEmpty else {
@@ -553,7 +579,8 @@ class PhotoSorterViewModel {
             Album(
                 id: target.id,
                 number: target.number,
-                isReversed: false,
+                isReversed: target.isReversed,
+                preservesClickOrder: preservesClickOrder,
                 memberIndices: memberIndices
             )
         )
@@ -564,12 +591,12 @@ class PhotoSorterViewModel {
     nonisolated private static func removingIndices(from album: Album, remove indicesToRemove: Set<Int>) -> Album? {
         let remaining = album.memberIndices.filter { !indicesToRemove.contains($0) }
         guard !remaining.isEmpty else { return nil }
-        let uniqueSorted = Array(Set(remaining)).sorted()
         return Album(
             id: album.id,
             number: album.number,
             isReversed: album.isReversed,
-            memberIndices: uniqueSorted
+            preservesClickOrder: album.preservesClickOrder,
+            memberIndices: remaining
         )
     }
 
@@ -597,7 +624,13 @@ class PhotoSorterViewModel {
                 guard album.id == albumId else { return album }
                 let remaining = album.memberIndices.filter { $0 != idx }
                 guard !remaining.isEmpty else { return nil }
-                return Album(id: album.id, number: album.number, isReversed: album.isReversed, memberIndices: remaining)
+                return Album(
+                    id: album.id,
+                    number: album.number,
+                    isReversed: album.isReversed,
+                    preservesClickOrder: album.preservesClickOrder,
+                    memberIndices: remaining
+                )
             }
             let renumbered = AlbumSortingService.renumberedAlbums(updatedAlbums, startingAlbumNumber: starting)
             await MainActor.run {
@@ -641,7 +674,7 @@ class PhotoSorterViewModel {
         }
     }
 
-    func buildOperations() -> [FileOperation] {
+    func buildOperations(copyDestination: URL? = nil) -> [FileOperation] {
         guard let srcDir = directoryURL else { return [] }
         return AlbumSortingService.buildRenameOperations(
             photos: photos,
@@ -649,28 +682,63 @@ class PhotoSorterViewModel {
             config: namingConfiguration,
             sourceDirectory: srcDir,
             duplicateMode: duplicateMode,
-            outputDirectoryURL: outputDirectoryURL
+            outputDirectoryURL: copyDestination ?? outputDirectoryURL
         )
     }
 
     func executeRename() async {
         guard let srcDir = directoryURL else { return }
         isRenaming = true
-        let ops = buildOperations()
         let isCopy = duplicateMode
+        let zipOnly = isCopy && compressOutputAsZip
+        let archiveBase = resolvedOutputArchiveBaseName
+        let archiveDir = archiveDestinationDirectory
+
+        let stagingDir: URL?
+        if zipOnly {
+            stagingDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("HoneySorter-\(UUID().uuidString)", isDirectory: true)
+        } else {
+            stagingDir = nil
+        }
+
+        let ops = buildOperations(copyDestination: zipOnly ? stagingDir : nil)
 
         do {
+            var archiveURL: URL?
+            let stagingPath = stagingDir?.path
+            let archiveDirectoryPath = archiveDir?.path
             try await Task.detached {
                 if isCopy {
+                    if zipOnly, let stagingPath {
+                        try FileManager.default.createDirectory(
+                            atPath: stagingPath,
+                            withIntermediateDirectories: true
+                        )
+                    }
                     try FileRenamer.executeCopy(operations: ops)
+                    if zipOnly, let stagingPath, let archiveDirectoryPath {
+                        let stagingURL = URL(fileURLWithPath: stagingPath, isDirectory: true)
+                        let archiveDirectoryURL = URL(fileURLWithPath: archiveDirectoryPath, isDirectory: true)
+                        archiveURL = try FileArchiveService.zipDirectory(
+                            stagingURL,
+                            archiveDirectory: archiveDirectoryURL,
+                            archiveBaseName: archiveBase
+                        )
+                        try? FileManager.default.removeItem(at: stagingURL)
+                    }
                 } else {
                     try FileRenamer.executeRename(in: srcDir, operations: ops)
                 }
             }.value
             await rescanCurrentDirectory()
-            resultMessage = isCopy
-                ? "Copied \(ops.count) file(s) successfully."
-                : "Renamed \(ops.count) file(s) successfully."
+            if zipOnly, let archiveURL {
+                resultMessage = "Created archive “\(archiveURL.lastPathComponent)” with \(ops.count) file(s). No Sorted folder was left on disk."
+            } else if isCopy {
+                resultMessage = "Copied \(ops.count) file(s) successfully."
+            } else {
+                resultMessage = "Renamed \(ops.count) file(s) successfully."
+            }
             showComplete = true
         } catch {
             errorMessage = error.localizedDescription
@@ -872,53 +940,5 @@ class PhotoSorterViewModel {
         directoryMonitor.stop()
         if let u = directoryURL, isAccessingSecurityScope { u.stopAccessingSecurityScopedResource() }
         if let u = outputDirectoryURL, isAccessingOutputScope { u.stopAccessingSecurityScopedResource() }
-    }
-}
-
-private extension Array where Element == Int {
-    func insertionIndex(of x: Int) -> Int {
-        var lo = 0
-        var hi = count
-        while lo < hi {
-            let mid = (lo + hi) / 2
-            if self[mid] < x {
-                lo = mid + 1
-            } else {
-                hi = mid
-            }
-        }
-        return lo
-    }
-
-    func binaryContains(_ x: Int) -> Bool {
-        var lo = 0
-        var hi = count - 1
-        while lo <= hi {
-            let mid = (lo + hi) / 2
-            let v = self[mid]
-            if v == x { return true }
-            if v < x {
-                lo = mid + 1
-            } else {
-                hi = mid - 1
-            }
-        }
-        return false
-    }
-
-    func binaryIndex(of x: Int) -> Int? {
-        var lo = 0
-        var hi = count - 1
-        while lo <= hi {
-            let mid = (lo + hi) / 2
-            let v = self[mid]
-            if v == x { return mid }
-            if v < x {
-                lo = mid + 1
-            } else {
-                hi = mid - 1
-            }
-        }
-        return nil
     }
 }
